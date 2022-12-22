@@ -65,7 +65,7 @@ def main():
 
     # load pretrain weights
     # download url: https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
-    model_weight_path = "./mobilenet_v2.pth"
+    model_weight_path = "./mobilenet_v2-pre.pth"
     assert os.path.exists(model_weight_path), "file {} dose not exist.".format(model_weight_path)
     pre_weights = torch.load(model_weight_path, map_location='cpu')
 
@@ -87,7 +87,7 @@ def main():
     optimizer = optim.Adam(params, lr=0.0001)
 
     best_acc = 0.0
-    save_path = './MobileNetV2.pth'
+    save_path = './mobilenet_v2.pth'
     train_steps = len(train_loader)
     for epoch in range(epochs):
         # train
