@@ -151,7 +151,7 @@ if __name__ == '__main__':
 
     # 数据集所在根目录
     # https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz
-    img_root = "/home/leon/Deep_Learning/data_set/flower_data/flower_photos"
+    img_root = "/home/leon/DL_Code/Cls_dataset/flower_data/flower_photos"
     parser.add_argument('--data-path', type=str, default=img_root)
 
     # resnet34 官方权重下载地址
