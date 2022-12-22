@@ -25,7 +25,7 @@ def main():
                                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])}
 
     data_root = os.path.abspath(os.path.join(os.getcwd(), "../.."))  # get data_set root mkdir
-    image_path = os.path.join(data_root, "data_set", "flower_data")  # get flower_data path
+    image_path = os.path.join(data_root, "Cls_dataset", "flower_data")  # get flower_data path
     assert os.path.exists(image_path), "{} path does not exist.".format(image_path)
     train_dataset = datasets.ImageFolder(root=os.path.join(image_path, "train"),
                                          transform=data_transform["train"])
