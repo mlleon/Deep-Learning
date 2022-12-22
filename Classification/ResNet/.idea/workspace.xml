@@ -2,7 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="c15d9808-9cfa-4459-971b-642d08fa1591" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/../GoogleNet/test.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/load_weights.py" beforeDir="false" afterPath="$PROJECT_DIR$/load_weights.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -36,17 +37,17 @@
     "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
 }]]></component>
-  <component name="RunManager" selected="Python.train">
+  <component name="RunManager" selected="Python.load_weights">
     <configuration name="load_weights" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
-      <module name="Test5_resnet" />
+      <module name="ResNet" />
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
       <envs>
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
-      <option name="SDK_HOME" value="" />
+      <option name="SDK_HOME" value="$USER_HOME$/conda/bin/python" />
       <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
-      <option name="IS_MODULE_SDK" value="true" />
+      <option name="IS_MODULE_SDK" value="false" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <option name="SCRIPT_NAME" value="$PROJECT_DIR$/load_weights.py" />
@@ -123,9 +124,9 @@
     </configuration>
     <recent_temporary>
       <list>
+        <item itemvalue="Python.load_weights" />
         <item itemvalue="Python.train" />
         <item itemvalue="Python.model" />
-        <item itemvalue="Python.load_weights" />
         <item itemvalue="Python.test" />
       </list>
     </recent_temporary>
