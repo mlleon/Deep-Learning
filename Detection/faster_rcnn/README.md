@@ -6,7 +6,7 @@
 ## 环境配置：
 * Python3.6/3.7/3.8
 * Pytorch1.7.1(注意：必须是1.6.0或以上，因为使用官方提供的混合精度训练1.6.0后才支持)
-* pycocotools(Linux:`pip install pycocotools`; Windows:`pip install pycocotools-windows`)
+* pycocotools(Linux:`pip install pycocotools`; Windows:`pip install pycocotools-windows`(不需要额外安装vs))
 * Ubuntu或Centos(不建议Windows)
 * 最好使用GPU训练
 * 详细环境配置见`requirements.txt`
@@ -53,6 +53,12 @@
 * 训练过程中保存的`results.txt`是每个epoch在验证集上的COCO指标，前12个值是COCO指标，后面两个值是训练平均损失以及学习率
 * 在使用预测脚本时，要将`train_weights`设置为你自己生成的权重路径。
 * 使用validation文件时，注意确保你的验证集或者测试集中必须包含每个类别的目标，并且使用时只需要修改`--num-classes`、`--data-path`和`--weights-path`即可，其他代码尽量不要改动
+
+## 如果对Faster RCNN原理不是很理解可参考我的bilibili
+* https://b23.tv/sXcBSP
+
+## 进一步了解该项目，以及对Faster RCNN代码的分析可参考我的bilibili
+* https://b23.tv/HvMiDy
 
 ## Faster RCNN框架图
 ![Faster R-CNN](fasterRCNN.png) 

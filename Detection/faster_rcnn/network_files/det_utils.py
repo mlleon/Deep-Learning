@@ -205,18 +205,15 @@ class BoxCoder(object):
         Args:
             rel_codes: bbox regression parameters   # 预测边界框回归参数
             boxes: anchors/proposals    # 第一次调用是anchors坐标，第二次调用开始是proposals坐标
-
-        Returns:
-
         """
         assert isinstance(boxes, (list, tuple))
         assert isinstance(rel_codes, torch.Tensor)
         # 获取每张图片生成box数目（anchor数目）
-        boxes_per_image = [b.size(0) for b in boxes]    # boxes_per_image:[14250, 14250]
-        # 获取一个batch中所有anchor坐标信息拼接在一起 —> torch.Size([28500, 4])
+        boxes_per_image = [b.size(0) for b in boxes]    # boxes_per_image:[217413, 217413]
+        # 获取一个batch中所有anchor坐标信息拼接在一起 —> torch.Size([434826, 4])
         concat_boxes = torch.cat(boxes, dim=0)
 
-        box_sum = 0     # 该循环也是获取一个batch中anchor的数目 -> box_sum:28500， 该步骤有点多余
+        box_sum = 0     # 该循环也是获取一个batch中anchor的数目 -> box_sum:434826， 该步骤有点多余
         for val in boxes_per_image:
             box_sum += val
 
@@ -241,7 +238,7 @@ class BoxCoder(object):
             rel_codes (Tensor): encoded boxes (bbox regression parameters)
             boxes (Tensor): reference boxes (anchors/proposals)
         """
-        # 将变量boxes设置为与变量rel_codes一样的设备和数据类型
+        # 将变量boxes设置与变量rel_codes一样的设备和数据类型
         boxes = boxes.to(rel_codes.dtype)
 
         # xmin, ymin, xmax, ymax
@@ -252,7 +249,7 @@ class BoxCoder(object):
 
         # 如果使用rel_codes[0]得到的dx只有一个维度，使用rel_codes[:, 0::4]得到的dx有2个维度
         wx, wy, ww, wh = self.weights  # RPN中为[1,1,1,1], fastrcnn中为[10,10,5,5] ,这是一个超参数
-        dx = rel_codes[:, 0::4] / wx   # 预测anchors/proposals的中心坐标x回归参数 torch.Size([29250, 1])
+        dx = rel_codes[:, 0::4] / wx   # 预测anchors/proposals的中心坐标x回归参数
         dy = rel_codes[:, 1::4] / wy   # 预测anchors/proposals的中心坐标y回归参数
         dw = rel_codes[:, 2::4] / ww   # 预测anchors/proposals的宽度回归参数
         dh = rel_codes[:, 3::4] / wh   # 预测anchors/proposals的高度回归参数
