@@ -7,6 +7,10 @@ from torch import Tensor
 class BalancedPositiveNegativeSampler(object):
     """
     This class samples batches, ensuring that they contain a fixed proportion of positives
+
+    顾名思义，一般负样本数量远大于正样本数量，需要通过BalancedPositiveNegativeSampler平衡正负样本
+    如何平衡呢？其实很简单，就是随机采样，正样本采:batch_size_per_image*positve_fraction，
+    负样本采:bacth_size_per_image-正样本数
     """
 
     def __init__(self, batch_size_per_image, positive_fraction):
@@ -16,10 +20,15 @@ class BalancedPositiveNegativeSampler(object):
             batch_size_per_image (int): number of elements to be selected per image
             positive_fraction (float): percentage of positive elements per batch
         """
+        """
+            目标检测的特点是负样本数量远大于正样本数量，需要通过BalancedPositiveNegativeSampler随机采样平衡正负样本
+                正样本采:batch_size_per_image*positve_fraction
+                负样本采:bacth_size_per_image-正样本数
+        """
         self.batch_size_per_image = batch_size_per_image
         self.positive_fraction = positive_fraction
 
-    def __call__(self, matched_idxs):
+    def __call__(self, matched_idxs):   # 这里matched_idexs不是原有的matched_idxs，而是传入的lables
         # type: (List[Tensor]) -> Tuple[List[Tensor], List[Tensor]]
         """
         Arguments:
@@ -36,44 +45,41 @@ class BalancedPositiveNegativeSampler(object):
         The first list contains the positive elements that were selected,
         and the second list the negative example.
         """
+        """
+            输入：matched_idx的取值：0为背景(负样本)，-1为介于背景和目标之间，>0为目标(正样本)
+            返回：pos_idx和neg_idx，分别记录正样本和负样本
+        """
         pos_idx = []
         neg_idx = []
-        # 遍历每张图像的matched_idxs
-        for matched_idxs_per_image in matched_idxs:
-            # >= 1的为正样本, nonzero返回非零元素索引
+        # 遍历每张图像的matched_idxs， 这里matched_idexs不是原有的matched_idxs，而是传入的lables
+        # matched_idxs=[tensor([0., 0., 0.,  ..., 0., 0., 0.]), tensor([0., 0., 0.,  ..., 0., 0., 0.])]
+        for matched_idxs_per_image in matched_idxs:     # len(matched_idxs)=batch
+            # >= 1的为正样本, nonzero返回非零元素索引    positive = tensor([242613, 242616, 242619, 242622, 242625, 242628])
             # positive = torch.nonzero(matched_idxs_per_image >= 1).squeeze(1)
             positive = torch.where(torch.ge(matched_idxs_per_image, 1))[0]
-            # = 0的为负样本
+            # = 0的为负样本  negative = tensor([     0,      1,      2,  ..., 242988, 242989, 242990])
             # negative = torch.nonzero(matched_idxs_per_image == 0).squeeze(1)
             negative = torch.where(torch.eq(matched_idxs_per_image, 0))[0]
 
             # 指定正样本的数量
-            num_pos = int(self.batch_size_per_image * self.positive_fraction)
+            num_pos = int(self.batch_size_per_image * self.positive_fraction)   # num_pos = 128
             # protect against not enough positive examples
             # 如果正样本数量不够就直接采用所有正样本
-            num_pos = min(positive.numel(), num_pos)
-            # 指定负样本数量
-            num_neg = self.batch_size_per_image - num_pos
+            num_pos = min(positive.numel(), num_pos)    # num_pos = 6
+            # 指定负样本数量=每张图片正负样本总数-正样本个数
+            num_neg = self.batch_size_per_image - num_pos   # num_neg = 250
             # protect against not enough negative examples
             # 如果负样本数量不够就直接采用所有负样本
             num_neg = min(negative.numel(), num_neg)
 
             # randomly select positive and negative examples
             # Returns a random permutation of integers from 0 to n - 1.
-            # 随机选择指定数量的正负样本
-            """
-                >>> perm1 = torch.randperm(200)[:7]
-                >>> perm2 = torch.randperm(500)[:249]
-                >>> perm1
-                tensor([185, 148, 155,   2,  37, 160,  56])
-                >>> perm2.numel()
-                249
-            """
-            perm1 = torch.randperm(positive.numel(), device=positive.device)[:num_pos]
-            perm2 = torch.randperm(negative.numel(), device=negative.device)[:num_neg]
+            # 从所有正负样本中随机选择指定数量的正负样本的索引
+            perm1 = torch.randperm(positive.numel(), device=positive.device)[:num_pos]  # tensor([0, 2, 3, 4, 5, 1])
+            perm2 = torch.randperm(negative.numel(), device=negative.device)[:num_neg]  # tensor([185366, 25807, ..., 74088, 6308])
 
-            pos_idx_per_image = positive[perm1]
-            neg_idx_per_image = negative[perm2]
+            pos_idx_per_image = positive[perm1]     # 获取正样本的anchor索引
+            neg_idx_per_image = negative[perm2]     # 获取父样本的anchor索引
 
             # create binary mask from indices
             pos_idx_per_image_mask = torch.zeros_like(
@@ -113,11 +119,13 @@ def encode_boxes(reference_boxes, proposals, weights):
 
     # unsqueeze()
     # Returns a new tensor with a dimension of size one inserted at the specified position.
+    # 分别获取anchor左上角(x1,y1)和右下角坐标值(x2,y2)
     proposals_x1 = proposals[:, 0].unsqueeze(1)
     proposals_y1 = proposals[:, 1].unsqueeze(1)
     proposals_x2 = proposals[:, 2].unsqueeze(1)
     proposals_y2 = proposals[:, 3].unsqueeze(1)
 
+    # 分别获取gt左上角(x1,y1)和右下角坐标值(x2,y2)
     reference_boxes_x1 = reference_boxes[:, 0].unsqueeze(1)
     reference_boxes_y1 = reference_boxes[:, 1].unsqueeze(1)
     reference_boxes_x2 = reference_boxes[:, 2].unsqueeze(1)
@@ -125,21 +133,21 @@ def encode_boxes(reference_boxes, proposals, weights):
 
     # implementation starts here
     # parse widths and heights
-    ex_widths = proposals_x2 - proposals_x1
-    ex_heights = proposals_y2 - proposals_y1
+    ex_widths = proposals_x2 - proposals_x1     # 获取anchor的宽
+    ex_heights = proposals_y2 - proposals_y1    # 获取anchor的高
     # parse coordinate of center point
-    ex_ctr_x = proposals_x1 + 0.5 * ex_widths
-    ex_ctr_y = proposals_y1 + 0.5 * ex_heights
+    ex_ctr_x = proposals_x1 + 0.5 * ex_widths   # 计算anchor的中心坐标x1
+    ex_ctr_y = proposals_y1 + 0.5 * ex_heights  # 计算anchor的中心坐标y2
 
-    gt_widths = reference_boxes_x2 - reference_boxes_x1
-    gt_heights = reference_boxes_y2 - reference_boxes_y1
-    gt_ctr_x = reference_boxes_x1 + 0.5 * gt_widths
-    gt_ctr_y = reference_boxes_y1 + 0.5 * gt_heights
+    gt_widths = reference_boxes_x2 - reference_boxes_x1     # 获取gt的宽
+    gt_heights = reference_boxes_y2 - reference_boxes_y1    # 获取gt的高
+    gt_ctr_x = reference_boxes_x1 + 0.5 * gt_widths     # 计算gt的中心坐标x1
+    gt_ctr_y = reference_boxes_y1 + 0.5 * gt_heights    # 计算gt的中心坐标y1
 
-    targets_dx = wx * (gt_ctr_x - ex_ctr_x) / ex_widths
-    targets_dy = wy * (gt_ctr_y - ex_ctr_y) / ex_heights
-    targets_dw = ww * torch.log(gt_widths / ex_widths)
-    targets_dh = wh * torch.log(gt_heights / ex_heights)
+    targets_dx = wx * (gt_ctr_x - ex_ctr_x) / ex_widths     # 获取gt和anchor中心坐标x的偏移量dx
+    targets_dy = wy * (gt_ctr_y - ex_ctr_y) / ex_heights    # 获取gt和anchor中心坐标y的偏移量dy
+    targets_dw = ww * torch.log(gt_widths / ex_widths)      # 获取gt和anchor的宽的缩放量dw
+    targets_dh = wh * torch.log(gt_heights / ex_heights)    # 获取gt和anchor的宽的缩放量dh
 
     targets = torch.cat((targets_dx, targets_dy, targets_dw, targets_dh), dim=1)
     return targets
@@ -166,17 +174,17 @@ class BoxCoder(object):
         """
         结合anchors和与之对应的gt计算regression参数
         Args:
-            reference_boxes: List[Tensor] 每个proposal/anchor对应的gt_boxes
-            proposals: List[Tensor] anchors/proposals
+            reference_boxes: List[Tensor] 每个proposal/anchor对应的gt_boxes坐标信息
+            proposals: List[Tensor] anchors/proposals坐标信息
 
         Returns: regression parameters
 
         """
         # 统计每张图像的anchors个数，方便后面拼接在一起处理后在分开
-        # reference_boxes和proposal数据结构相同
-        boxes_per_image = [len(b) for b in reference_boxes]
-        reference_boxes = torch.cat(reference_boxes, dim=0)
-        proposals = torch.cat(proposals, dim=0)
+        boxes_per_image = [len(b) for b in reference_boxes]     # boxes_per_image=[217413, 217413]
+        # 将batch中所有图片中anchor对应的gt拼接在一起
+        reference_boxes = torch.cat(reference_boxes, dim=0)     # shape：torch.Size([434826, 4])
+        proposals = torch.cat(proposals, dim=0)     # shape：torch.Size([434826, 4])
 
         # targets_dx, targets_dy, targets_dw, targets_dh
         targets = self.encode_single(reference_boxes, proposals)
@@ -281,6 +289,15 @@ class BoxCoder(object):
 
 
 class Matcher(object):
+    """
+        实现anchor与gt的配对，并记录索引，每一个anchor都找一个与之iou最大的gt。
+            若max_iou>high_threshold，则该anchor的label为1，即认定该anchor是目标；
+            若max_iou<low_threshold，则该anchor的label为0，即认定该anchor为背景；
+            若max_iou介于low_threshold和high_threshold之间，则忽视该anchor，不纳入损失函数。
+
+        gt可对应０个或者多个anchor，anchor可对应0或1个gt。这个匹配操作是基于box_iou返回的iou矩阵进行的。
+        返回：长度为N的向量，其表示每一个anchor的类型：背景-1,介于背景和目标之间-2以及目标边框（对应最大gt的基准边框的索引）
+    """
     BELOW_LOW_THRESHOLD = -1
     BETWEEN_THRESHOLDS = -2
 
@@ -305,7 +322,7 @@ class Matcher(object):
                 set_low_quality_matches_ for more details.
         """
         self.BELOW_LOW_THRESHOLD = -1
-        self.BETWEEN_THRESHOLDS = -2
+        self.BETWEEN_THRESHOLDS = -2    # 这两个取值必须小于0，因为索引从0开始
         assert low_threshold <= high_threshold
         self.high_threshold = high_threshold  # 0.7
         self.low_threshold = low_threshold    # 0.3
@@ -313,8 +330,6 @@ class Matcher(object):
 
     def __call__(self, match_quality_matrix):
         """
-        计算anchors与每个gtboxes匹配的iou最大值，并记录索引，
-        iou<low_threshold索引值为-1， low_threshold<=iou<high_threshold索引值为-2
         Args:
             match_quality_matrix (Tensor[float]): an MxN tensor, containing the
             pairwise quality between M ground-truth elements and N predicted elements.
@@ -337,30 +352,37 @@ class Matcher(object):
 
         # match_quality_matrix is M (gt) x N (predicted)
         # Max over gt elements (dim 0) to find best gt candidate for each prediction
-        # M x N 的每一列代表一个anchors与所有gt的匹配iou值
-        # matched_vals代表每列的最大值，即每个anchors与所有gt匹配的最大iou值
-        # matches对应最大值所在的索引
+        # 给定anchor，找与之iou最大的gt，M x N 的每一列代表一个anchors与所有gt的匹配iou值
+        #   matched_vals：每列的最大值，即每个anchors与所有gt匹配的最大iou值 tensor([0.0000, 0.0000, 0.0000,  ..., 0.2146, 0.2984, 0.3245])
+        #   matches：对应iou最大值在match_quality_matrix的行索引（每列最大值的行索引，也是对应的gt索引） tensor([0, 0, 0,  ..., 7, 7, 7])
         matched_vals, matches = match_quality_matrix.max(dim=0)  # the dimension to reduce.
+
+        """
+        allow_low_quality_matches (bool):
+            如果值为真，则允许anchor匹配上小于设定阈值iou的gt，因为可能出现某个gt与所有的anchor之间的iou都小于high_threshold
+        """
         if self.allow_low_quality_matches:
-            all_matches = matches.clone()   # 这里没有用=而是clone，如果用=则是引用，list引用修改的话，list本身也会修改，所以用的是clone
+            # 如果用all_matches = matches，修改all_matches时，match也会被修改，所以用的是clone
+            all_matches = matches.clone()   # all_matches = tensor([0, 0, 0,  ..., 7, 7, 7])
         else:
             all_matches = None
 
         # Assign candidate matches with low quality to negative (unassigned) values
-        # 计算iou小于low_threshold的索引
-        below_low_threshold = matched_vals < self.low_threshold     # 得到一个boolean蒙版
-        # 计算iou在low_threshold与high_threshold之间的索引值
+        # 计算每列最大iou小于low_threshold的索引
+        below_low_threshold = matched_vals < self.low_threshold
+        # 计算每列iou在low_threshold与high_threshold之间的索引值
         between_thresholds = (matched_vals >= self.low_threshold) & (
             matched_vals < self.high_threshold
         )
-        # iou小于low_threshold的matches索引置为-1
+        # 每列最大iou小于low_threshold的matches索引置为-1
         matches[below_low_threshold] = self.BELOW_LOW_THRESHOLD  # -1
 
-        # iou在[low_threshold, high_threshold]之间的matches索引置为-2
+        # 每列最大iou在[low_threshold, high_threshold]之间的matches索引置为-2
         matches[between_thresholds] = self.BETWEEN_THRESHOLDS    # -2
 
         if self.allow_low_quality_matches:
             assert all_matches is not None
+            # 给定gt，与之对应的最大iou的anchor，即便iou小于阈值，也把它作为目标
             self.set_low_quality_matches_(matches, all_matches, match_quality_matrix)
 
         return matches
@@ -372,69 +394,28 @@ class Matcher(object):
         maximum overlap with it (including ties); for each prediction in that set, if
         it is unmatched, then match it to the ground-truth with which it has the highest
         quality value.
-        为只有低质量匹配的预测生成额外的匹配。
-        具体来说，对于每个ground-truth，找到与其有最大重叠（包括关系）的一组预测；
-        对于该集合中的每个预测，如果不匹配，则将其与具有最高质量值的gt实况进行匹配。
         """
         # For each gt, find the prediction with which it has highest quality
-        # 对于每个gt boxes寻找与其iou最大的anchor，
-        # highest_quality_foreach_gt为匹配到的最大iou值 -> [0.8, 0.85, 0.9, 0.65]
-        highest_quality_foreach_gt, _ = match_quality_matrix.max(dim=1)  # the dimension to reduce.
+        # 给定gt，找与之iou最大的anchor，M x N 的每一行代表一个gt与所有anchor匹配iou值
+        #   highest_quality_foreach_gt：每行的最大值，即每个gt与所有anchor匹配的最大iou值， tensor([0.7790, 0.4683, 0.6989])
+        #   _：对应iou最大值在match_quality_matrix的索引（每行最大值的列索引，即对应的anchor索引） tensor([217219, 217084, 217198])
+        highest_quality_foreach_gt, _ = match_quality_matrix.max(dim=1)
 
         # Find highest quality match available, even if it is low, including ties
-        # 寻找每个gt boxes与其iou最大的anchor索引，一个gt匹配到的最大iou可能有多个anchor
-        # gt_pred_pairs_of_highest_quality = torch.nonzero(
-        #     match_quality_matrix == highest_quality_foreach_gt[:, None]
-        # )
-        """
-            torch.where(condition，a，b)
-            其中：
-                输入参数condition：条件限制，如果满足条件，则选择a，否则选择b作为输出。
-            注意：
-                a和b是tensor
-                torch.where(condition) is identical to torch.nonzero(condition, as_tuple=True).
-
-            这里的torch.where等价于torch.nonzero
-
-            torch.nonzero(input_tensor)：返回输入tensor非零元素的坐标
-
-            例子：
-                >>> torch.nonzero(torch.Tensor([[0.6, 0.0, 0.0, 0.0],
-                ...                             [0.0, 0.4, 0.0, 0.0],
-                ...                             [0.0, 0.0, 1.2, 0.0],
-                ...                             [0.0, 0.0, 0.0,-0.4]]))
-                ==输出==
-                 0  0
-                 1  1
-                 2  2
-                 3  3
-                对于输出需要一行一行的解读：
-                    第一行：0 0     输入tensor的[0, 0]是一个非零元素
-                    第二行：1 1     输入tensor的[1, 1]是一个非零元素
-                    ...
-
-        """
+        # 即给定gt，获取每行最大iou完整的位置索引，这里torch.where()和torch.nonzero()效果一致
+        # 完整的位置索引：(tensor([0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2]), # 对应的行索引（gt序号）
+        #               tensor([217219, 217222, 217084, 217087, 217090, 217093, 217135, 217138, 217141,
+        #                   217144, 217186, 217189, 217192, 217195, 217198, 217201]))   # 对应的列索引（anchor序号）
         gt_pred_pairs_of_highest_quality = torch.where(
             torch.eq(match_quality_matrix, highest_quality_foreach_gt[:, None])
         )
-        # Example gt_pred_pairs_of_highest_quality:
-        #   tensor([[    0, 39796],
-        #           [    1, 32055],
-        #           [    1, 32070],
-        #           [    2, 39190],
-        #           [    2, 40255],
-        #           [    3, 40390],
-        #           [    3, 41455],
-        #           [    4, 45470],
-        #           [    5, 45325],
-        #           [    5, 46390]])
-        # Each row is a (gt index, prediction index)
-        # Note how gt items 1, 2, 3, and 5 each have two ties
 
-        # gt_pred_pairs_of_highest_quality[:, 0]代表是对应的gt index(不需要)
-        # pre_inds_to_update = gt_pred_pairs_of_highest_quality[:, 1]
+        # 只获取行最大iou对应的列索引值(对应的anchor序号)
+        # tensor([217219, 217222, 217084, 217087, 217090, 217093, 217135, 217138, 217141,
+        #         217144, 217186, 217189, 217192, 217195, 217198, 217201])
         pre_inds_to_update = gt_pred_pairs_of_highest_quality[1]
         # 保留该anchor匹配gt最大iou的索引，即使iou低于设定的阈值
+        # 该步骤前，iou低于指定阈值时，行索引（gt索引）被设置为-2(丢弃样本)或-1(负样本)，重新将满足要求的anchor对应的gt索引替换-2和-1
         matches[pre_inds_to_update] = all_matches[pre_inds_to_update]
 
 

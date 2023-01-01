@@ -174,13 +174,13 @@ def box_iou(boxes1, boxes2):
         iou (Tensor[N, M]): the NxM matrix containing the pairwise
             IoU values for every element in boxes1 and boxes2
     """
-    area1 = box_area(boxes1)
-    area2 = box_area(boxes2)
+    area1 = box_area(boxes1)    # 计算该图片所有gt_box的面积
+    area2 = box_area(boxes2)    # 计算该图片所有anchor的面积
 
     #  When the shapes do not match,
     #  the shape of the returned output tensor follows the broadcasting rules
-    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # left-top [N,M,2]
-    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # right-bottom [N,M,2]
+    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # left-top [N,M,2] 计算gt_box和anchor相交的左上角坐标
+    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # right-bottom [N,M,2] 计算gt_box和anchor相交的右下角坐标
 
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]

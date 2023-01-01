@@ -661,7 +661,7 @@ class RegionProposalNetwork(torch.nn.Module):
     def assign_targets_to_anchors(self, anchors, targets):
         # type: (List[Tensor], List[Dict[str, Tensor]]) -> Tuple[List[Tensor], List[Tensor]]
         """
-        计算每个anchors最匹配的gt，并划分为正样本，背景以及废弃的样本
+        计算每个anchors最匹配的gt，并划分为正样本，背景以及丢弃的样本
         Args：
             anchors: (List[Tensor])
             targets: (List[Dict[Tensor])
@@ -674,53 +674,43 @@ class RegionProposalNetwork(torch.nn.Module):
         matched_gt_boxes = []   # 存储anchors匹配的GT
         # 遍历每张图像的anchors和targets
         for anchors_per_image, targets_per_image in zip(anchors, targets):
-            gt_boxes = targets_per_image["boxes"]   # 只提取GT信息（里面原本包含boxes, labels, image_id, area, iscrowd）
-            if gt_boxes.numel() == 0:   # 当前图片中没有GT
+            gt_boxes = targets_per_image["boxes"]   # 获取GT信息
+            if gt_boxes.numel() == 0:   # 当前图片中没有GT，也就是没有检测目标
                 device = anchors_per_image.device
                 matched_gt_boxes_per_image = torch.zeros(anchors_per_image.shape, dtype=torch.float32, device=device)
                 labels_per_image = torch.zeros((anchors_per_image.shape[0],), dtype=torch.float32, device=device)
-            else:   # 当前图片中有GT
-                # 计算anchors与真实bbox的iou信息
+            else:   # 当前图片中有GT，有检测目标
+                # match_quality_matrix是iou矩阵，shape为torch.Size([3, 217413])，即（M，N），M为gt的个数，N为anchor的个数，
+                # match_quality_matrix(i,j)表示第i个gt与第j个anchor的iou
                 # set to self.box_similarity when https://github.com/pytorch/pytorch/issues/27495 lands
-                match_quality_matrix = box_ops.box_iou(gt_boxes, anchors_per_image)     # [当前图片GT的个数，该图像生成anchors的总个数]
-                # 计算每个anchors与gt匹配iou最大的索引（如果iou<0.3索引置为-1，0.3<iou<0.7索引为-2）
-                matched_idxs = self.proposal_matcher(match_quality_matrix)
-                # get the targets corresponding GT for each proposal
-                # NB: need to clamp the indices because we can have a single
-                # GT in the image, and matched_idxs can be -2, which goes
-                # out of bounds
-                # 这里使用clamp设置下限0是为了方便取每个anchors对应的gt_boxes信息
-                # 负样本和舍弃的样本都是负值，所以为了防止越界直接置为0
-                # 因为后面是通过labels_per_image变量来记录正样本位置的，
-                # 所以负样本和舍弃的样本对应的gt_boxes信息并没有什么意义，
-                # 反正计算目标边界框回归损失时只会用到正样本。
-                """
-                    torch.clamp(input, min=None, max=None) → Tensor
-                        参数：
-                            input: 输入tensor
-                            min：元素大小的下限
-                            max：元素大小的上限
-                        返回值：
-                            经过裁剪后的tensor
+                match_quality_matrix = box_ops.box_iou(gt_boxes,   # 该图片的gt_box信息
+                                                       anchors_per_image)   # 该图像生成所有anchors信息
 
-                    例子：
-                        >>> a = torch.linspace(-1, 1, 4)
-                        >>> a
-                        tensor([-1.0000, -0.3333,  0.3333,  1.0000])
-                        >>> torch.clamp(a, min=-0.5, max=0.5)
-                        tensor([-0.5000, -0.3333,  0.3333,  0.5000])
+                # 计算每个anchors与gt匹配iou最大的gt索引序号（如果iou<0.3索引置为-1，0.3<=iou<0.7索引为-2）
+                # matched_idxs = tensor([-1, -1, -1,  ..., -1, 1, -2])， shape：217413
+                matched_idxs = self.proposal_matcher(match_quality_matrix)
                 """
-                matched_gt_boxes_per_image = gt_boxes[matched_idxs.clamp(min=0)]    # 将元素<0的全部设置为0
+                torch.clamp()方法生成新的对象，这里使用clamp设置下限0是为了方便取每个anchors对应的gt_boxes信息，负样本和舍弃的样本都是负值，所以为了防止越界直接置为0
+                因为后面是通过labels_per_image变量来记录正样本位置的，所以负样本和舍弃的样本对应的gt_boxes信息并没有什么意义，反正计算目标边界框回归损失时只会用到正样本。
+                
+                matched_gt_boxes_per_image=tensor([[483.9640, 320.0000, 741.9360, 650.6667],
+                                                    [483.9640, 320.0000, 741.9360, 650.6667],
+                                                        ...,
+                                                    [483.9640, 320.0000, 741.9360, 650.6667]])
+                matched_gt_boxes_per_image的shape：torch.Size([217413, 4])
+                """
+                # clamp操作把负数变0，所以matched_gt_boxes_per_image为所有被认为是正样本的anchors对应的gt坐标信息
+                matched_gt_boxes_per_image = gt_boxes[matched_idxs.clamp(min=0)]
 
                 # 记录所有anchors匹配后的标签(正样本处标记为1，负样本处标记为0，丢弃样本处标记为-2)
-                labels_per_image = matched_idxs >= 0
+                labels_per_image = matched_idxs >= 0    # 认为是正样本的anchor下标
                 labels_per_image = labels_per_image.to(dtype=torch.float32)     # True -> 1; False -> 0 -> 正样本的位置值为1.0
 
-                # background (negative examples)
+                # background (negative examples) 认为是负样本的anchor下标
                 bg_indices = matched_idxs == self.proposal_matcher.BELOW_LOW_THRESHOLD  # -1
                 labels_per_image[bg_indices] = 0.0  # 负样本的位置值为0.0
 
-                # discard indices that are between thresholds
+                # discard indices that are between thresholds 被丢弃的anchor下标
                 inds_to_discard = matched_idxs == self.proposal_matcher.BETWEEN_THRESHOLDS  # -2
                 labels_per_image[inds_to_discard] = -1.0    # 丢弃样本的位置值为-1.0
 
@@ -852,7 +842,7 @@ class RegionProposalNetwork(torch.nn.Module):
         objectness = objectness[batch_idx, top_n_idx]  # torch.Size([2, 8741])
         # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应特征层索引序号
         levels = levels[batch_idx, top_n_idx]   # torch.Size([2, 8741])
-        # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应边界框回归参数
+        # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应边界框坐标信息
         proposals = proposals[batch_idx, top_n_idx]  # torch.Size([2, 8741, 4])
 
         # 把proposal目标分数通过sigmoid方法转换为概率值
@@ -898,41 +888,45 @@ class RegionProposalNetwork(torch.nn.Module):
         """
         计算RPN损失，包括类别损失（前景与背景），bbox regression损失
         Arguments:
-            objectness (Tensor)：预测的前景概率
-            pred_bbox_deltas (Tensor)：预测的bbox regression
-            labels (List[Tensor])：真实的标签 1, 0, -1（batch中每一张图片的labels对应List的一个元素中）
-            regression_targets (List[Tensor])：真实的bbox regression
+            objectness (Tensor)：预测的目标分数
+            pred_bbox_deltas (Tensor)：预测的边界框坐标偏移量
+            labels (List[Tensor])：anchor对应的标签(正样本标签为1，负样本标签为0，丢弃的样本标签为-1)
+            regression_targets (List[Tensor])：每个anchor对应的gt相对于anchor的回归参数
 
         Returns:
             objectness_loss (Tensor) : 类别损失
             box_loss (Tensor)：边界框回归损失
         """
+
         # 按照给定的batch_size_per_image, positive_fraction选择正负样本
         sampled_pos_inds, sampled_neg_inds = self.fg_bg_sampler(labels)
         # 将一个batch中的所有正负样本List(Tensor)分别拼接在一起，并获取非零位置的索引
         # sampled_pos_inds = torch.nonzero(torch.cat(sampled_pos_inds, dim=0)).squeeze(1)
-        sampled_pos_inds = torch.where(torch.cat(sampled_pos_inds, dim=0))[0]
+        sampled_pos_inds = torch.where(torch.cat(sampled_pos_inds, dim=0))[0]   # 获取batch中所有正样本的anchor索引
         # sampled_neg_inds = torch.nonzero(torch.cat(sampled_neg_inds, dim=0)).squeeze(1)
-        sampled_neg_inds = torch.where(torch.cat(sampled_neg_inds, dim=0))[0]
+        sampled_neg_inds = torch.where(torch.cat(sampled_neg_inds, dim=0))[0]   # 获取batch中所有负样本的anchor索引
 
-        # 将所有正负样本索引拼接在一起
+        # 将batch中所有正负样本anchor索引拼接在一起  shape:512
         sampled_inds = torch.cat([sampled_pos_inds, sampled_neg_inds], dim=0)
-        objectness = objectness.flatten()
+        objectness = objectness.flatten()   # shape:434826
 
-        labels = torch.cat(labels, dim=0)
-        regression_targets = torch.cat(regression_targets, dim=0)
+        labels = torch.cat(labels, dim=0)   # shape:434826
+        regression_targets = torch.cat(regression_targets, dim=0)   # shape:434826
 
         # 计算边界框回归损失 -> 只需计算正样本的损失
+        # 计算pred_bbox_deltas（预测框相对于anchor的偏移量）与regression_targets（gt相对于anchor的偏移量）的L1 loss
         box_loss = det_utils.smooth_l1_loss(
-            pred_bbox_deltas[sampled_pos_inds],
-            regression_targets[sampled_pos_inds],
+            pred_bbox_deltas[sampled_pos_inds],     # anchor对应的proposal预测的边界框坐标偏移量（只计算正样本）
+            regression_targets[sampled_pos_inds],   # anchor对应的gt相对于anchor的回归参数（只计算正样本）
             beta=1 / 9,
             size_average=False,
         ) / (sampled_inds.numel())
 
-        # 计算目标预测概率损失，损失函数为BCE；logits表明传入的分数不需要进行任何预处理
+        # 计算目标预测概率损失，计算正样本和负样本置信度与label的之间交叉熵损失，label取值为0和1
+        # 损失函数为BCE；logits表明传入的分数不需要进行任何预处理, 其实就是nn.sigmoid和nn.BCELoss的合体
         objectness_loss = F.binary_cross_entropy_with_logits(
-            objectness[sampled_inds], labels[sampled_inds]
+            objectness[sampled_inds],   # 正样本和负样本置信度分数
+            labels[sampled_inds]    # 正样本和负样本的lable，取值分别为1和0
         )
 
         return objectness_loss, box_loss
@@ -1027,15 +1021,18 @@ class RegionProposalNetwork(torch.nn.Module):
         if self.training:   # 如果是训练模式则计算损失
             assert targets is not None
             # 计算每个anchors最匹配的gt，并将anchors进行分类，前景，背景以及废弃的anchors
+            #       正样本anchor匹配对应的gt坐标信息
+            #       负样本和丢弃的样本匹配为索引为0的gt坐标信息
             labels, matched_gt_boxes = self.assign_targets_to_anchors(anchors, targets)
             # 结合anchors以及对应的gt，计算regression参数
-            # matched_gt_boxes：每个anchor所匹配的GT
-            # anchors：每个anchors的坐标
-            # 根据这两个参数计算回归损失
-            regression_targets = self.box_coder.encode(matched_gt_boxes, anchors)
+            regression_targets = self.box_coder.encode(matched_gt_boxes,  # 每个anchor所匹配的GT坐标
+                                                       anchors)     # 每个anchors的坐标
             loss_objectness, loss_rpn_box_reg = self.compute_loss(
-                objectness, pred_bbox_deltas, labels, regression_targets
-            )
+                                                objectness,     # 预测的目标分数
+                                                pred_bbox_deltas,   # 预测的边界框坐标偏移量
+                                                labels,     # anchor对应的标签(正样本标签为1，负样本标签为0，丢弃的样本标签为-1)
+                                                regression_targets)  # 每个anchor对应的gt相对于anchor的回归参数
+
             losses = {
                 "loss_objectness": loss_objectness,
                 "loss_rpn_box_reg": loss_rpn_box_reg
