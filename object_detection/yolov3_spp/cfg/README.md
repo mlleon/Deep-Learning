@@ -66,6 +66,7 @@ MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stri
  
 ## 6 [upsample] —— 上采样层:
 * stride=2 —— 上采样倍率
+
 在原版YOLO v3中是没有上采样层的，在YOLO v3-SPP中上采样层出现在两个地方：
     * SPP第一个predict layer到第二个predict layer之间
     * SPP第二个predict layer到第三个predict layer之间
