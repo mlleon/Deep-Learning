@@ -37,14 +37,14 @@
 
 * configuration对应的内容如下：
 * [convolutional] —— SPP前的一个卷积层
-* batch_normalize=1
-* filters=512
-* size=1
-* stride=1
-* pad=1
-* activation=leaky
+  * batch_normalize=1
+  * filters=512
+  * size=1
+  * stride=1
+  * pad=1
+  * activation=leaky
 
-### SPP ###
+### SPP Param Set ###
 * [maxpool]
 * stride=1
 * size=5
@@ -65,9 +65,6 @@
 
 * [route]
 * layers=-1,-3,-5,-6
-
-### End SPP ###
-
 
 * 通过SPP图我们可以看到，特征图在进入SPP之前是经过一个Conv层的 --> MaxPooling层（5×5/1） --> route层（layer=-2，layer只有一个值，所以是指向-2层的） --> 将输出指向Conv层 --> MaxPooling层（9×9/1） --> route层（layer=-4，layer只有一个值，所以是指向-4层的） --> 将输出指向Conv层 --> MaxPooling层（13×13/1） -–> route（layer=-1,-3,-5,-6，layer有多个数值表示将多层的输出进行维度拼接 —— shape相同，channel相加）
  
