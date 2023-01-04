@@ -21,21 +21,16 @@
 * MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stride=1，不进行下采样；stride=2，进行两倍下采样
 
 ## 4 [route] —— 常规路线
-* 这个层结构有两种形式，当route有一个值和多个值，对应的操作是不一样的。
+这个层结构有两种形式，当route有一个值和多个值，对应的操作是不一样的。
 
-### 4.1 [route]取一个值
-* [route]
-* layers=-2, 当layer只有一个值的时候，代表指向某一层的输出
+* [route]取一个值
+  * layers=-2, 当layer只有一个值的时候，代表指向某一层的输出
 
-### 4.2 [route]取多个值
-* [route]
-* layers=-1,-3,-5,-6, 当layer有多个值的时候，代表将多个输出进行拼接（在通道维度进行拼接 —— shape相同，channel相加）
+* [route]取多个值
+  * layers=-1,-3,-5,-6, 当layer有多个值的时候，代表将多个输出进行拼接（在通道维度进行拼接 —— shape相同，channel相加）
 
 ## 5 搭建SPP：
-* 为了更加容易理解[route]，我们看一下SPP是怎么在yolov3-spp.cfg文件中搭建的。
-
-
-* configuration对应的内容如下：
+为了更加容易理解[route]，看一下SPP是怎么在yolov3-spp.cfg文件中搭建的。configuration对应的内容如下：
 * [convolutional] —— SPP前的一个卷积层
   * batch_normalize=1
   * filters=512
@@ -46,30 +41,30 @@
 
 ### SPP Param Set ###
 * [maxpool]
-* stride=1
-* size=5
+  * stride=1
+  * size=5
 
 * [route]
-* layers=-2
+  * layers=-2
 
 * [maxpool]
-* stride=1
-* size=9
+  * stride=1
+  * size=9
 
 * [route]
-* layers=-4
+  * layers=-4
 
 * [maxpool]
-* stride=1
-* size=13
+  * stride=1
+  * size=13
 
 * [route]
-* layers=-1,-3,-5,-6
+  * layers=-1,-3,-5,-6
 
-* 通过SPP图我们可以看到，特征图在进入SPP之前是经过一个Conv层的 --> MaxPooling层（5×5/1） --> route层（layer=-2，layer只有一个值，所以是指向-2层的） --> 将输出指向Conv层 --> MaxPooling层（9×9/1） --> route层（layer=-4，layer只有一个值，所以是指向-4层的） --> 将输出指向Conv层 --> MaxPooling层（13×13/1） -–> route（layer=-1,-3,-5,-6，layer有多个数值表示将多层的输出进行维度拼接 —— shape相同，channel相加）
+通过SPP图我们可以看到，特征图在进入SPP之前是经过一个Conv层的 --> MaxPooling层（5×5/1） --> route层（layer=-2，layer只有一个值，所以是指向-2层的） --> 将输出指向Conv层 --> MaxPooling层（9×9/1） --> route层（layer=-4，layer只有一个值，所以是指向-4层的） --> 将输出指向Conv层 --> MaxPooling层（13×13/1） -–> route（layer=-1,-3,-5,-6，layer有多个数值表示将多层的输出进行维度拼接 —— shape相同，channel相加）。对于layer来说，当前层为0
  
 
-* 对于layer来说，当前层为0
+
 ## 6 [upsample] —— 上采样层:
 * stride=2 —— 上采样倍率
 在原版YOLO v3中是没有上采样层的，在YOLO v3-SPP中上采样层出现在两个地方：
