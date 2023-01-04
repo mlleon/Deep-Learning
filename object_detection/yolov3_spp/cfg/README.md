@@ -15,10 +15,10 @@
 ![shortcut](shortcut.png) 
 
 ## 3 [maxpool] —— MaxPooling层
-* 在YOLO v3原版中是没有MaxPooling层的。在YOLO v3-SPP中，MaxPooling只出现在SPP结构中。
+在YOLO v3原版中是没有MaxPooling层的。在YOLO v3-SPP中，MaxPooling只出现在SPP结构中。
 * stride=1 —— 池化核步长
 * size=5  ——池化核尺寸
-* MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stride=1，不进行下采样；stride=2，进行两倍下采样
+MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stride=1，不进行下采样；stride=2，进行两倍下采样
 
 ## 4 [route] —— 常规路线
 这个层结构有两种形式，当route有一个值和多个值，对应的操作是不一样的。
@@ -74,7 +74,7 @@
     SPP第二个predict layer到第三个predict layer之间
 这里上采样层的作用是：将特征图的 H , W H, W H,W放大到原来的2倍。
 ## 7 [yolo] —— yolo层:
-* 这里的yolo层并不是用于预测的predictor，yolo层是接在每个predictor之后的结构。它存在的意义是对predictor的结果进行处理以及生成一系列的anchors
+这里的yolo层并不是用于预测的predictor，yolo层是接在每个predictor之后的结构。它存在的意义是对predictor的结果进行处理以及生成一系列的anchors
 * mask = 6,7,8  —— 使用哪些anchor priors（对应的是索引，从0开始）
 * anchors = 10,13,  16,30,  33,23,  30,61,  62,45,  59,119,  116,90,  156,198,  373,326 —— 对应YOLO v3采用的anchor priors（两两为一组，分别代码anchor priors的宽度W和高度H）
 * classes=80 —— 目标类别个数（这里的80是COCO数据集的类别个数）
@@ -83,12 +83,12 @@
 * ignore_thresh = .7 —— 没有使用到的参数
 * truth_thresh = 1 —— 没有使用到的参数
 * random=1 —— 没有使用到的参数
-* 注意：
 
-    * 这里的yolo层并不是用于预测的predictor，yolo层是接在每个predictor之后的结构。
-    * 它存在的意义是对predictor的结果进行处理以及生成一系列的anchors
-    * anchors = 10,13, 16,30, 33,23, 30,61, 62,45, 59,119, 116,90, 156,198, 373,326 —— 对应YOLO v3采用的anchor priors（两两为一组，分别代表anchor priors的宽度W和高度H）
-        * 10,13, 16,30, 33,23：小目标的anchor priors（对应的predictor为52×52）——mask对应的索引为 0,1,2
-        * 30,61, 62,45, 59,119：中目标的anchor priors（对应的predictor为26×26）——mask对应的索引为 4,5,6
-        * 116,90, 156,198, 373,326：大目标的anchor priors（对应的predictor为13×13）——mask对应的索引为 7,8,9
+注意：
+  * 这里的yolo层并不是用于预测的predictor，yolo层是接在每个predictor之后的结构。
+  * 它存在的意义是对predictor的结果进行处理以及生成一系列的anchors
+  * anchors = 10,13, 16,30, 33,23, 30,61, 62,45, 59,119, 116,90, 156,198, 373,326 —— 对应YOLO v3采用的anchor priors（两两为一组，分别代表anchor priors的宽度W和高度H）
+      * 10,13, 16,30, 33,23：小目标的anchor priors（对应的predictor为52×52）——mask对应的索引为 0,1,2
+      * 30,61, 62,45, 59,119：中目标的anchor priors（对应的predictor为26×26）——mask对应的索引为 4,5,6
+      * 116,90, 156,198, 373,326：大目标的anchor priors（对应的predictor为13×13）——mask对应的索引为 7,8,9
 
