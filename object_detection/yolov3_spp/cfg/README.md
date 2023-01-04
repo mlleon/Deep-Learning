@@ -12,7 +12,7 @@
 ## 2 [shortcut]	—— 捷径分支：
 * from=-3	—— 与前面哪一层的输出进行融合（两个shape完全一样的特征图相加的操作）
 * activation=linear —— 线性激活（对输入不做任何处理 — y=x）
-![shortcut](shortcut.png) 
+![shortcut](https://github.com/mlleon/dl_code/blob/main/object_detection/yolov3_spp/cfg/shortcut.png) 
 
 ## 3 [maxpool] —— MaxPooling层
 在YOLO v3原版中是没有MaxPooling层的。在YOLO v3-SPP中，MaxPooling只出现在SPP结构中。
