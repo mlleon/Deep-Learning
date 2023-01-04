@@ -78,17 +78,20 @@ def main():
     model.eval()  # 进入验证模式
     with torch.no_grad():
         # init
-        img_height, img_width = img.shape[-2:]
+        img_height, img_width = img.shape[-2:]   # 获取传入预测图片的高和宽
         init_img = torch.zeros((1, 3, img_height, img_width), device=device)
-        model(init_img)
+        model(init_img)     # 这里先传入一个初始化图片是为了避免在第一次预测的时候计算预测时间
 
         t_start = time_synchronized()
         predictions = model(img.to(device))[0]
         t_end = time_synchronized()
         print("inference+NMS time: {}".format(t_end - t_start))
 
+        # 获取预测图片预测的所有boxes坐标信息 shape：torch.Size([6, 4])
         predict_boxes = predictions["boxes"].to("cpu").numpy()
+        # 获取预测图片预测的所有类别索引 tensor([ 8, 12, 12,  8,  8, 12])
         predict_classes = predictions["labels"].to("cpu").numpy()
+        # 获取预测图片预测的所有类别分数 tensor([0.8746, 0.7425, 0.7339, 0.4908, 0.4399, 0.3087])
         predict_scores = predictions["scores"].to("cpu").numpy()
 
         if len(predict_boxes) == 0:

@@ -96,8 +96,7 @@ class FasterRCNNBase(nn.Module):
                     raise ValueError("Expected target boxes to be of type "
                                      "Tensor, got {:}.".format(type(boxes)))
 
-        # 下面定义一个空列表original_image_sizes，声明其类型为List[Tuple[int, int]]。
-        # 这个变量是用来存储图像的原始尺寸，在后面transform中用到。
+        # 定义一个空列表original_image_sizes，声明其类型为List[Tuple[int, int]]，这个变量是用来存储图像的原始尺寸
         original_image_sizes = torch.jit.annotate(List[Tuple[int, int]], [])
         for img in images:
             val = img.shape[-2:]  # 获取某张图片的高和宽, VOCDataSet已经将image转为tensor格式，其形状为[channel,h,w]
@@ -120,13 +119,12 @@ class FasterRCNNBase(nn.Module):
             features = OrderedDict([('0', features)])  # 若在多层特征层上预测，传入的就是一个有序字典
 
         # 将特征层以及标注target信息传入rpn中，得到区域建议框proposals和RPN的loss
-        # proposals: List[Tensor], Tensor_shape: [num_proposals, 4],
-        # 每个proposals是绝对坐标，且为(x1, y1, x2, y2)格式
-        # 获取proposals:区域线性框和proposal_losses：RPN损失
+        # proposals: List[Tensor], Tensor_shape: [num_proposals, 4]
+        # 获取区域线性框proposals和proposal_losses：RPN损失, 每个proposals是绝对坐标，且为(x1, y1, x2, y2)格式
         proposals, proposal_losses = self.rpn(images, features, targets)
 
-        # 将rpn生成的数据以及标注target信息传入fast rcnn后半部分
-        # 获取detections：最终检测的一系列目标和detector_losses：faster_rcnn损失值
+        # 将rpn生成的proposal以及标注target信息传入fast rcnn后半部分
+        # detections(最终检测的一系列目标)和detector_losses(faster_rcnn损失值)
         detections, detector_losses = self.roi_heads(features, proposals, images.image_sizes, targets)
 
         # 对网络的预测结果进行后处理（主要将bboxes还原到原图像尺度上）

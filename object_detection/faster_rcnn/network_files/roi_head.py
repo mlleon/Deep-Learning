@@ -14,10 +14,10 @@ def fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
     Computes the loss for Faster R-CNN.
 
     Arguments:
-        class_logits : 预测类别概率信息，shape=[num_anchors, num_classes]
-        box_regression : 预测边目标界框回归信息
-        labels : 真实类别信息
-        regression_targets : 真实目标边界框信息
+        class_logits : FastRCNNPredictor预测类别概率信息，shape=[num_anchors, num_classes]
+        box_regression : FastRCNNPredictor预测边目标界框回归信息
+        labels : proposal对应gt的类别标签序号
+        regression_targets : proposal对应gt的回归参数(proposal与对应gt的中心坐标偏移量和宽高的缩放量)
 
     Returns:
         classification_loss (Tensor)
@@ -31,24 +31,23 @@ def fastrcnn_loss(class_logits, box_regression, labels, regression_targets):
     classification_loss = F.cross_entropy(class_logits, labels)
 
     # get indices that correspond to the regression targets for
-    # the corresponding ground truth labels, to be used with
-    # advanced indexing
-    # 返回标签类别大于0的索引
+    # the corresponding ground truth labels, to be used with advanced indexing
+    # 返回标签类别大于0的索引(获取正样本对应类别标签索引)
     # sampled_pos_inds_subset = torch.nonzero(torch.gt(labels, 0)).squeeze(1)
     sampled_pos_inds_subset = torch.where(torch.gt(labels, 0))[0]
 
-    # 返回标签类别大于0位置的类别信息
+    # 返回标签类别大于0位置的类别标签序号(正样本对应类别标签)
     labels_pos = labels[sampled_pos_inds_subset]
 
     # shape=[num_proposal, num_classes]
-    N, num_classes = class_logits.shape
-    box_regression = box_regression.reshape(N, -1, 4)
+    N, num_classes = class_logits.shape     # class_logits.shape = torch.Size([1024, 21])
+    box_regression = box_regression.reshape(N, -1, 4)   # torch.Size([1024, 84]) -> torch.Size([1024, 21, 4])
 
     # 计算边界框损失信息
     box_loss = det_utils.smooth_l1_loss(
-        # 获取指定索引proposal的指定类别box信息
-        box_regression[sampled_pos_inds_subset, labels_pos],
-        regression_targets[sampled_pos_inds_subset],
+        # 获取指定索引proposal的指定类别box信息(获取正样本回归参数)
+        box_regression[sampled_pos_inds_subset, labels_pos],    # 获取预测正样本对应的回归参数
+        regression_targets[sampled_pos_inds_subset],    # 获取正样本proposal对应gt的回归参数
         beta=1 / 9,
         size_average=False,
     ) / labels.numel()
@@ -144,34 +143,46 @@ class RoIHeads(torch.nn.Module):
                 matched_idxs_in_image = self.proposal_matcher(match_quality_matrix)
 
                 # 注意-1, -2对应的gt索引都会调整到0,这里会将丢弃的proposal对应的标签序号也置为0，
-                # 所以获取的标签类别为第0个gt的类别（实际上并不是真正的）,后续会进一步处理
                 clamped_matched_idxs_in_image = matched_idxs_in_image.clamp(min=0)
+                """
+                torch.clamp()方法生成新的对象，使用对应gt的索引获取每个proposal对应的gt的类别标签索引，因为将负样本和丢弃的样本proposal
+                对应gt的索引都设为0，所以只有正样本proposal匹配到的gt类别标签索引是正确的，后面又结合proposal对应matched_idxs_in_image标签
+                将负样本proposal和丢弃样本proposal重新分别赋值，就能获取到完全正确的proposal对应gt的类别标签索引
+                
+                RPN中在这部分不仅获取了每个anchor对应gt的坐标信息(只有正样本的anchor是完全正确的)，同时也获取了每个anchor对应gt的类别标签
+                ROI中在这部分只获取了每个proposal对应gt的类别标签，并没有获取每个proposal对应gt的坐标信息，但是获得了每个proposal对应gt的索引
+                """
                 # 获取该图片proposal匹配到的gt对应标签  labels_in_image=tensor([9, 9, 9,  ..., 9, 9, 9])， shape：2004
                 labels_in_image = gt_labels_in_image[clamped_matched_idxs_in_image]
                 labels_in_image = labels_in_image.to(dtype=torch.int64)
 
-                # label background (below the low threshold)，将gt索引为-1的类别设置为0，即背景，负样本
+                # label background (below the low threshold)，认为是负样本的proposal的类别标签
                 bg_inds = matched_idxs_in_image == self.proposal_matcher.BELOW_LOW_THRESHOLD  # -1
                 labels_in_image[bg_inds] = 0
 
-                # label ignore proposals (between low and high threshold)，将gt索引为-2的类别设置为-1, 即废弃样本
+                # label ignore proposals (between low and high threshold)，认为是丢弃样本的proposal的类别标签
                 ignore_inds = matched_idxs_in_image == self.proposal_matcher.BETWEEN_THRESHOLDS  # -2
                 labels_in_image[ignore_inds] = -1  # -1 is ignored by sampler
 
             matched_idxs.append(clamped_matched_idxs_in_image)
             labels.append(labels_in_image)
-        return matched_idxs, labels
+        return matched_idxs, labels     # matched_idxs：每个proposal对应gt的索引(不是坐标信息)， labels：每个proposal对应gt索引标签
 
     def subsample(self, labels):
         # type: (List[Tensor]) -> List[Tensor]
-        # 调用BalancedPositiveNegativeSampler方法获取正负样本蒙版，因为proposal对应的gt索引不是完全的真实值，所以这里传入的是lables
+        # labels是一个list，[0,1], labels[0]代表batch中第一个图片生成proposal对应gt的类别标签
+        # labels=[tensor([0, 0, 0,  ..., 0, 3, 3]), tensor([ 0,  0,  0,  ..., 15, 15, 15])]
+        # 调用BalancedPositiveNegativeSampler方法获取正负样本蒙版sampled_pos_inds和sampled_neg_inds
+        # sampled_pos_inds是一个list，[0,1], sampled_pos_inds[0]是batch中第一张图片生成的采样后正样本
+        #   proposal索引蒙版(采样后的正样本proposal索引位置值为1，其它位置的均为0)
+        # sampled_pos_inds = [tensor([0, 0, 0,  ..., 0, 1, 1], dtype=torch.uint8),
+        #                     tensor([0, 0, 0,  ..., 1, 1, 1], dtype=torch.uint8)]
         sampled_pos_inds, sampled_neg_inds = self.fg_bg_sampler(labels)
         sampled_inds = []
         # 遍历每张图片的正负样本索引
         for img_idx, (pos_inds_img, neg_inds_img) in enumerate(zip(sampled_pos_inds, sampled_neg_inds)):
-            # 记录所有采集样本索引（包括正样本和负样本）
             # img_sampled_inds = torch.nonzero(pos_inds_img | neg_inds_img).squeeze(1)
-            img_sampled_inds = torch.where(pos_inds_img | neg_inds_img)[0]  # 获取选取的正负样本对应proposal索引
+            img_sampled_inds = torch.where(pos_inds_img | neg_inds_img)[0]  # 获取所有采集后的正负样本对应proposal索引
             sampled_inds.append(img_sampled_inds)
         return sampled_inds
 
@@ -214,7 +225,7 @@ class RoIHeads(torch.nn.Module):
 
         # 检查target数据是否为空
         self.check_targets(targets)
-        assert targets is not None  # 如果不加这句，jit.script会不通过(看不懂)
+        assert targets is not None
 
         dtype = proposals[0].dtype  # 获取proposal的数据类型
         device = proposals[0].device    # 获取proposal的设备信息
@@ -227,15 +238,15 @@ class RoIHeads(torch.nn.Module):
         #         [ 500.0000,  246.1539,  607.6923,  461.5385],
         #         [  82.0513,  410.2564,  287.1795,  533.3334],
         #         [   2.5641,  517.9487,  315.3846,  800.0000]])]
-        gt_boxes = [t["boxes"].to(dtype) for t in targets]  # 获取gt坐标信息，shape：
+        gt_boxes = [t["boxes"].to(dtype) for t in targets]  # 获取gt坐标信息
         gt_labels = [t["labels"] for t in targets]  # 获取gt标签类别信息，[tensor([8]), tensor([20, 16, 16, 16, 16, 18])]
 
         # append ground-truth bboxes to proposal
-        # 将gt_boxes拼接到proposal后面，由于检测图片中生成的正样本proposal太少，添加gt作为正样本处理
+        # 将gt_boxes拼接到proposal后面，由于初始 检测图片中生成的正样本proposal太少，添加gt作为正样本处理
         proposals = self.add_gt_proposals(proposals, gt_boxes)
 
         # get matching gt indices for each proposal
-        # 匹配每个proposal对应gt的索引(索引0可能包含一部分丢弃样本的索引)和proposal对应gt的标签类别(标签类别是真实值)
+        # 匹配每个proposal对应gt的索引(正样本proposal匹配的对应gt索引是正确的)和proposal对应gt的标签类别(标签类别是真实值)
         #   matched_idxs=[tensor([0, 0, 0,  ..., 2, 3, 4]), tensor([0, 0, 1,  ..., 5, 6, 7])]
         #   labels=[tensor([0, 0, 0,  ..., 4, 4, 4]), tensor([15,  0, 15,  ..., 15, 15, 15])]
         matched_idxs, labels = self.assign_targets_to_proposals(proposals,  # 拼接gt后的proposal
@@ -243,27 +254,35 @@ class RoIHeads(torch.nn.Module):
                                                                 gt_labels)  # gt标签的类别信息
 
         # sample a fixed proportion of positive-negative proposals， 按给定数量和比例获取采样后正负样本对应proposal的索引
+        # sampled_inds是一个list，sampled_inds[0]是batch中第一张图片采样后所有proposal样本的索引，sampled_inds[0].shape=512
         sampled_inds = self.subsample(labels)
 
-        matched_gt_boxes = []   # 存储正负样本proposal对应的gt坐标信息
+        matched_gt_boxes = []   # 存储采样后正负样本proposal对应的gt坐标信息
         num_images = len(proposals)     # 获取batch的长度
-        # 遍历每张图像
+        # 遍历batch中的每张图像
         for img_id in range(num_images):
-            img_sampled_inds = sampled_inds[img_id]     # 获取batch中每张图像的正负样本对应的proposal索引
-            proposals[img_id] = proposals[img_id][img_sampled_inds]     # 获取batch中每张图像的正负样本的proposals坐标信息
-            labels[img_id] = labels[img_id][img_sampled_inds]    # 获取正负样本proposal对应的真实gt标签类别
-            matched_idxs[img_id] = matched_idxs[img_id][img_sampled_inds]   # 获取正负样本proposal对应的gt索引信息
-            gt_boxes_in_image = gt_boxes[img_id]    # 获取batch中每张图片gt坐标信息
+            # 获取采样后batch中保留的每张图像的正负样本对应的proposal索引， shape：512
+            img_sampled_inds = sampled_inds[img_id]
+            # 获取采样后batch中保留的每张图像的正负样本的proposals坐标信息  proposals[img_id].shape=512
+            proposals[img_id] = proposals[img_id][img_sampled_inds]
+            # 获取采样后batch中保留的每张图像的正负样本proposal对应的真实gt标签类别  labels[img_id].shape=512
+            labels[img_id] = labels[img_id][img_sampled_inds]
+            # 获取采样后batch中保留的每张图像的正负样本proposal对应的gt索引信息  matched_idxs[img_id].shape=512
+            matched_idxs[img_id] = matched_idxs[img_id][img_sampled_inds]
+            # 获取采样后batch中保留的每张图片gt坐标信息  tensor([[ 302.7440,  185.6000,  434.9280,  300.8000],
+            #                                            [ 462.6440,  360.5334, 1066.0000,  800.0001]])
+            gt_boxes_in_image = gt_boxes[img_id]
 
             if gt_boxes_in_image.numel() == 0:  # 如果图片没有gt创建一个坐标为[0,0,0,0]的gt
                 gt_boxes_in_image = torch.zeros((1, 4), dtype=dtype, device=device)
-            # 获取正负样本proposal对应的gt坐标信息，是一个list[0,1], 每个元素的shape：torch.Size([512, 4])
+            # 获取batch中每张图片正负样本proposal对应的gt坐标信息，是一个list[0,1], 每个元素的shape：torch.Size([512, 4])
+            # 这里获取的正样本proposal对应的gt坐标是准确的，负样本proposal对应的gt坐标可能是不准确的(因为matched_idxs中把丢弃的proposal样本从-2置为0)
             matched_gt_boxes.append(gt_boxes_in_image[matched_idxs[img_id]])
 
-        # proposal和对应gt坐标偏移量和缩放量
-        regression_targets = self.box_coder.encode(matched_gt_boxes,    # 正负样本proposal对应的gt坐标信息
-                                                   proposals)   # 正负样本proposal坐标信息
-
+        # 每个proposal对应gt的回归参数(proposal与对应gt的中心坐标偏移量和宽高的缩放量)
+        regression_targets = self.box_coder.encode(matched_gt_boxes,    # 采样后保留的正负样本proposal对应的gt坐标信息
+                                                   proposals)   # 采样后保留的正负样本proposal坐标信息
+        # proposals:采样后保留的proposal， labels：采样后保留的proposal对应gt的类别标签， regression_targets：采样后保留的proposal对应gt的回归参数
         return proposals, labels, regression_targets
 
     def postprocess_detections(self,
@@ -286,7 +305,7 @@ class RoIHeads(torch.nn.Module):
 
         Args:
             class_logits: 网络预测类别概率信息
-            box_regression: 网络预测的边界框回归参数
+            box_regression: 网络预测的边界框回归参class_logits数
             proposals: rpn输出的proposal(不需要选取正负样本)
             image_shapes: 打包成batch前每张图像的宽高
         """
@@ -379,15 +398,12 @@ class RoIHeads(torch.nn.Module):
                 floating_point_types = (torch.float, torch.double, torch.half)
                 assert t["boxes"].dtype in floating_point_types, "target boxes must of float type"
                 assert t["labels"].dtype == torch.int64, "target labels must of int64 type"
-        """
-            如果是训练模式，则需执行select_training_samples方法筛选正负样本。
-                RPN在训练模式下会保留2000个proposal，但在训练时只需从中采样512个即可
-            如果是验证模式，则RPN仅会保留1000个proposal，不需要选择正负样本
-        """
-        if self.training:
-            # 划分正负样本，计算proposal对应gt的标签以及边界框回归信息
+
+        if self.training:   # 如果是训练模式，则需执行select_training_samples方法筛选正负样本。
+            # 划分正负样本采样固定数量满足一定比例的正负样本proposal，并计算采样后的proposal对应gt的标签和proposal对应gt的回归参数
+            # proposals:采样后保留的proposal， labels：采样后保留的proposal对应gt的类别标签， regression_targets：采样后保留的proposal对应gt的回归参数
             proposals, labels, regression_targets = self.select_training_samples(proposals, targets)
-        else:   # eval模式下没有GT
+        else:   # eval模式下没有GT, 如果是验证模式，则RPN仅会保留1000个proposal，不需要选择正负样本
             labels = None
             regression_targets = None
 
@@ -400,13 +416,13 @@ class RoIHeads(torch.nn.Module):
                                          proposals,     # 采样后的正负样本proposal坐标
                                          image_shapes)  # 图片的原始尺寸，image_shapes=[(800, 1136), (800, 1204)]
 
-        # 通过roi_pooling后的两个全连接层，box_head: 对应着图片上的Two MLP Head
+        # 通过roi_pooling后的两个全连接层，box_head: 对应着图片上的Two MLPHead
         # box_features_shape: [num_proposals, representation_size]
         box_features = self.box_head(box_features)
 
         # 接着分别预测目标类别和边界框回归参数（并行结构），对应图片上的FastRCNNPredictor
-        # class_logits：类别分数，shape：torch.Size([1024, 21])，21 = 20(NC) + 1(负样本)
-        # box_regression：预测回归参数，shape：torch.Size([1024, 84])，84 = 21 * 4
+        # class_logits：所有proposal预测的类别分数，shape：torch.Size([1024, 21])，21 = 20(NC) + 1(负样本)
+        # box_regression：所有proposal预测的回归参数(proposal对应gt的坐标偏移量和缩放量)，shape：torch.Size([1024, 84])，84 = 21 * 4
         class_logits, box_regression = self.box_predictor(box_features)
 
         """
@@ -422,17 +438,17 @@ class RoIHeads(torch.nn.Module):
             assert labels is not None and regression_targets is not None
             loss_classifier, loss_box_reg = fastrcnn_loss(class_logits,  # FastRCNNPredictor预测的类别分数
                                                           box_regression,  # FastRCNNPredictor预测的回归参数
-                                                          labels,   # proposal对应的gt类别
-                                                          regression_targets)   # proposal对应的gt与proposal的回归参数
+                                                          labels,   # proposal对应的gt真实类别
+                                                          regression_targets)   # proposal与对应的gt的真实回归参数
             losses = {
                 "loss_classifier": loss_classifier,
                 "loss_box_reg": loss_box_reg
             }
         else:
-            boxes, scores, labels = self.postprocess_detections(class_logits,
-                                                                box_regression,
-                                                                proposals,
-                                                                image_shapes)
+            boxes, scores, labels = self.postprocess_detections(class_logits,   # FastRCNNPredictor预测的类别分数
+                                                                box_regression,  # FastRCNNPredictor预测的回归参数
+                                                                proposals,  # 经过RPN生成的proposals
+                                                                image_shapes)   # 图片的原始尺寸
             num_images = len(boxes)
             for i in range(num_images):
                 result.append(

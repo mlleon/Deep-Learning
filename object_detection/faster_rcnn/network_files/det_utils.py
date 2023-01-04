@@ -25,8 +25,8 @@ class BalancedPositiveNegativeSampler(object):
                 正样本采:batch_size_per_image*positve_fraction
                 负样本采:bacth_size_per_image-正样本数
         """
-        self.batch_size_per_image = batch_size_per_image
-        self.positive_fraction = positive_fraction
+        self.batch_size_per_image = batch_size_per_image    # 每张图片采样的anchor(RPN) 或每张图片采样的proposal(ROI)
+        self.positive_fraction = positive_fraction   # 正负样本比例因子
 
     def __call__(self, matched_idxs):   # 这里matched_idexs不是原有的matched_idxs，而是传入的lables
         # type: (List[Tensor]) -> Tuple[List[Tensor], List[Tensor]]
@@ -56,10 +56,10 @@ class BalancedPositiveNegativeSampler(object):
         for matched_idxs_per_image in matched_idxs:     # len(matched_idxs)=batch
             # >= 1的为正样本, nonzero返回非零元素索引    positive = tensor([242613, 242616, 242619, 242622, 242625, 242628])
             # positive = torch.nonzero(matched_idxs_per_image >= 1).squeeze(1)
-            positive = torch.where(torch.ge(matched_idxs_per_image, 1))[0]
+            positive = torch.where(torch.ge(matched_idxs_per_image, 1))[0]  # 获取所有正样本anchor(RPN)/proposal(ROI)的索引
             # = 0的为负样本  negative = tensor([     0,      1,      2,  ..., 242988, 242989, 242990])
             # negative = torch.nonzero(matched_idxs_per_image == 0).squeeze(1)
-            negative = torch.where(torch.eq(matched_idxs_per_image, 0))[0]
+            negative = torch.where(torch.eq(matched_idxs_per_image, 0))[0]   # 获取所有负样本anchor(RPN)/proposal(ROI)的索引
 
             # 指定正样本的数量
             num_pos = int(self.batch_size_per_image * self.positive_fraction)   # num_pos = 128
@@ -78,8 +78,8 @@ class BalancedPositiveNegativeSampler(object):
             perm1 = torch.randperm(positive.numel(), device=positive.device)[:num_pos]  # tensor([0, 2, 3, 4, 5, 1])
             perm2 = torch.randperm(negative.numel(), device=negative.device)[:num_neg]  # tensor([185366, 25807, ..., 74088, 6308])
 
-            pos_idx_per_image = positive[perm1]     # 获取正样本的anchor索引
-            neg_idx_per_image = negative[perm2]     # 获取父样本的anchor索引
+            pos_idx_per_image = positive[perm1]     # 获取采样后正样本的anchor(RPN)/proposal(ROI)索引  shape：117
+            neg_idx_per_image = negative[perm2]     # 获取采样后负样本的anchor(RPN)/proposal(ROI)索引  shape：139
 
             # create binary mask from indices
             pos_idx_per_image_mask = torch.zeros_like(
@@ -187,7 +187,7 @@ class BoxCoder(object):
         proposals = torch.cat(proposals, dim=0)     # shape：torch.Size([434826, 4])
 
         # targets_dx, targets_dy, targets_dw, targets_dh
-        targets = self.encode_single(reference_boxes,  # 每个anchor所匹配的GT坐标(RPN) 或 每个anchor所匹配的GT坐标(ROI)
+        targets = self.encode_single(reference_boxes,  # 每个anchor所匹配的GT坐标(RPN) 或 每个proposal所匹配的GT坐标(ROI)
                                      proposals)     # 每个anchors的坐标(RPN) 或 每个proposal的坐标(ROI)
         return targets.split(boxes_per_image, 0)
 
@@ -203,7 +203,7 @@ class BoxCoder(object):
         dtype = reference_boxes.dtype
         device = reference_boxes.device
         weights = torch.as_tensor(self.weights, dtype=dtype, device=device)
-        targets = encode_boxes(reference_boxes,     # 每个anchor所匹配的GT坐标(RPN) 或 每个anchor所匹配的GT坐标(ROI)
+        targets = encode_boxes(reference_boxes,     # 每个anchor所匹配的GT坐标(RPN) 或 每个proposal所匹配的GT坐标(ROI)
                                proposals,   # 每个anchors的坐标(RPN) 或 每个proposal的坐标(ROI)
                                weights)
 
@@ -228,7 +228,7 @@ class BoxCoder(object):
         for val in boxes_per_image:
             box_sum += val
 
-        # 将预测的bbox回归参数应用到对应anchors上得到预测proposal的坐标  torch.Size([29250, 4])
+        # 将RPN预测的回归参数(预测proposal与对应gt的中心坐标偏移量和宽高的缩放量)应用到对应anchors上得到预测proposal的坐标  torch.Size([29250, 4])
         pred_boxes = self.decode_single(
             rel_codes,  # RPNHead方法返回的预测边界框回归参数 torch.Size([29250, 4])
             concat_boxes    # 一个batch中所有anchor坐标信息 torch.Size([29250, 4])
@@ -253,30 +253,30 @@ class BoxCoder(object):
         boxes = boxes.to(rel_codes.dtype)
 
         # xmin, ymin, xmax, ymax
-        widths = boxes[:, 2] - boxes[:, 0]   # anchor/proposal宽度
-        heights = boxes[:, 3] - boxes[:, 1]  # anchor/proposal高度
-        ctr_x = boxes[:, 0] + 0.5 * widths   # anchor/proposal中心x坐标
-        ctr_y = boxes[:, 1] + 0.5 * heights  # anchor/proposal中心y坐标
+        widths = boxes[:, 2] - boxes[:, 0]   # anchor(RPN)宽度
+        heights = boxes[:, 3] - boxes[:, 1]  # anchor(RPN)高度
+        ctr_x = boxes[:, 0] + 0.5 * widths   # anchor(RPN)中心x坐标
+        ctr_y = boxes[:, 1] + 0.5 * heights  # anchor(RPN)中心y坐标
 
         # 如果使用rel_codes[0]得到的dx只有一个维度，使用rel_codes[:, 0::4]得到的dx有2个维度
         wx, wy, ww, wh = self.weights  # RPN中为[1,1,1,1], fastrcnn中为[10,10,5,5] ,这是一个超参数
-        dx = rel_codes[:, 0::4] / wx   # 预测anchors/proposals的中心坐标x回归参数
-        dy = rel_codes[:, 1::4] / wy   # 预测anchors/proposals的中心坐标y回归参数
-        dw = rel_codes[:, 2::4] / ww   # 预测anchors/proposals的宽度回归参数
-        dh = rel_codes[:, 3::4] / wh   # 预测anchors/proposals的高度回归参数
+        dx = rel_codes[:, 0::4] / wx   # 预测proposal中心坐标与对应gt的中心坐标x的偏移量
+        dy = rel_codes[:, 1::4] / wy   # 预测proposal中心坐标与对应gt的中心坐标y的偏移量
+        dw = rel_codes[:, 2::4] / ww   # 预测proposal与对应gt的宽的缩放量
+        dh = rel_codes[:, 3::4] / wh   # 预测proposal与对应gt的高的缩放量
 
         # limit max value, prevent sending too large values into torch.exp()    防止出现指数爆炸
         # self.bbox_xform_clip=math.log(1000. / 16)=4.135
         dw = torch.clamp(dw, max=self.bbox_xform_clip)
         dh = torch.clamp(dh, max=self.bbox_xform_clip)
 
-        # 将预测值应用到anchor中
+        # 将RPN预测的回归参数(预测proposal与对应gt的中心坐标偏移量和宽高的缩放量)应用到anchor中得到预测proposal的坐标信息
         pred_ctr_x = dx * widths[:, None] + ctr_x[:, None]
         pred_ctr_y = dy * heights[:, None] + ctr_y[:, None]
         pred_w = torch.exp(dw) * widths[:, None]
         pred_h = torch.exp(dh) * heights[:, None]
 
-        # 将预测的中心pred_ctr_x,pred_ctr_y坐标和预测的宽度pred_w和高度pred_h转化为左上角坐标和右下角坐标
+        # 将预测的proposal中心pred_ctr_x,pred_ctr_y坐标和预测的proposal宽度pred_w和高度pred_h转化为左上角坐标和右下角坐标
         # xmin torch.Size([29250, 1])
         pred_boxes1 = pred_ctr_x - torch.tensor(0.5, dtype=pred_ctr_x.dtype, device=pred_w.device) * pred_w
         # ymin   torch.Size([29250, 1])
@@ -288,7 +288,7 @@ class BoxCoder(object):
 
         # 将四个坐标在维度2堆叠，然后在维度1开始展平 torch.Size([29250, 4])
         pred_boxes = torch.stack((pred_boxes1, pred_boxes2, pred_boxes3, pred_boxes4), dim=2).flatten(1)
-        return pred_boxes
+        return pred_boxes   # 预测的proposal坐标信息(RPN)
 
 
 class Matcher(object):

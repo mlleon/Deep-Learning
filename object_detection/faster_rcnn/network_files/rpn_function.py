@@ -690,8 +690,8 @@ class RegionProposalNetwork(torch.nn.Module):
                 # matched_idxs = tensor([-1, -1, -1,  ..., -1, 1, -2])， shape：217413
                 matched_idxs = self.proposal_matcher(match_quality_matrix)
                 """
-                torch.clamp()方法生成新的对象，这里使用clamp设置下限0是为了方便取每个anchors对应的gt_boxes信息，负样本和舍弃的样本都是负值，所以为了防止越界直接置为0
-                因为后面是通过labels_per_image变量来记录正样本位置的，所以负样本和舍弃的样本对应的gt_boxes信息并没有什么意义，反正计算目标边界框回归损失时只会用到正样本。
+                torch.clamp()方法生成新的对象，使用对应gt的索引获取每个anchors对应的gt_boxes信息，因为将负样本和丢弃的样本anchor
+                对应gt的索引都设为0，所以只有正样本anchor匹配到的gt索引是正确的，但是这个并没有影响，计算目标边界框回归损失时只会用到正样本
                 
                 matched_gt_boxes_per_image=tensor([[483.9640, 320.0000, 741.9360, 650.6667],
                                                     [483.9640, 320.0000, 741.9360, 650.6667],
@@ -716,7 +716,7 @@ class RegionProposalNetwork(torch.nn.Module):
 
             labels.append(labels_per_image)
             matched_gt_boxes.append(matched_gt_boxes_per_image)
-        return labels, matched_gt_boxes
+        return labels, matched_gt_boxes     # labels:每个anchor对应gt的类别标签， matched_gt_boxes：每个anchor对应gt的坐标信息
 
     def _get_top_n_idx(self, objectness, num_anchors_per_level):
         # type: (Tensor, List[int]) -> Tensor
@@ -838,7 +838,7 @@ class RegionProposalNetwork(torch.nn.Module):
         """
         batch_idx = image_range[:, None]
 
-        # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应的概率信息
+        # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应的类别分数
         objectness = objectness[batch_idx, top_n_idx]  # torch.Size([2, 8741])
         # 切片获取batch中每张图片根据proposal对应的目标分数筛选后的proposal对应特征层索引序号
         levels = levels[batch_idx, top_n_idx]   # torch.Size([2, 8741])
@@ -849,15 +849,15 @@ class RegionProposalNetwork(torch.nn.Module):
         objectness_prob = torch.sigmoid(objectness)
 
         final_boxes = []    # 最终的boxes
-        final_scores = []   # 最终的分数
+        final_scores = []   # 最终的概率分数
         # 遍历每张图像的相关预测信息
         for boxes, scores, lvl, img_shape in zip(proposals, objectness_prob, levels, image_shapes):
-            # 调整预测的boxes信息，将越界的坐标调整到图片边界上（不要让proposal坐标落在在图片的外部）
+            # 调整预测的boxes(proposal)的坐标信息，将越界的坐标调整到图片边界上（不要让proposal坐标落在在图片的外部）
             boxes = box_ops.clip_boxes_to_image(boxes, img_shape)
 
-            # 返回boxes满足宽，高都大于min_size的proposal索引
+            # 返回boxes(proposal)满足宽，高都大于min_size的proposal索引，这里min_size=1
             keep = box_ops.remove_small_boxes(boxes, self.min_size)
-            # 移除proposal的边长都小于min_size的目标
+            # 根据返回的索引，移除proposal的边长都小于min_size的目标
             boxes, scores, lvl = boxes[keep], scores[keep], lvl[keep]
 
             # 移除小概率boxes，参考下面这个链接
@@ -873,7 +873,7 @@ class RegionProposalNetwork(torch.nn.Module):
                                        self.nms_thresh)     # 执行NMS时使用的阈值
 
             # keep only topk scoring predictions
-            # 通过切片获取前post_nms_top_n个索引
+            # 通过切片获取前post_nms_top_n个索引, 经过上面筛选proposal的方法，最终剩余的proposal可能小于2000个
             keep = keep[: self.post_nms_top_n()]
             # 通过切片得到最终的proposal和scores
             boxes, scores = boxes[keep], scores[keep]
@@ -899,14 +899,17 @@ class RegionProposalNetwork(torch.nn.Module):
         """
 
         # 按照给定的batch_size_per_image, positive_fraction选择正负样本
+        # sampled_pos_inds是一个list，[0,1], sampled_pos_inds[0]batch中第一张图片生成的采样正样本anchor索引蒙版(采样后的正样本anchor索引位置值为1，其它位置的均为0)
+        # sampled_pos_inds = [tensor([0, 0, 0,  ..., 0, 0, 0], dtype=torch.uint8),
+        #                     tensor([0, 0, 0,  ..., 0, 0, 0], dtype=torch.uint8)]
         sampled_pos_inds, sampled_neg_inds = self.fg_bg_sampler(labels)
         # 将一个batch中的所有正负样本List(Tensor)分别拼接在一起，并获取非零位置的索引（非0索引是正负样本索引）
         # sampled_pos_inds = torch.nonzero(torch.cat(sampled_pos_inds, dim=0)).squeeze(1)
-        sampled_pos_inds = torch.where(torch.cat(sampled_pos_inds, dim=0))[0]   # 获取batch中所有正样本的anchor索引
+        sampled_pos_inds = torch.where(torch.cat(sampled_pos_inds, dim=0))[0]  # 获取batch中采样后所有正样本的anchor索引， shape：127
         # sampled_neg_inds = torch.nonzero(torch.cat(sampled_neg_inds, dim=0)).squeeze(1)
-        sampled_neg_inds = torch.where(torch.cat(sampled_neg_inds, dim=0))[0]   # 获取batch中所有负样本的anchor索引
+        sampled_neg_inds = torch.where(torch.cat(sampled_neg_inds, dim=0))[0]   # 获取batch中采样后所有负样本的anchor索引， shape：385
 
-        # 将batch中所有正负样本(满足设定条件的anchor)索引拼接在一起  shape:512
+        # 将batch中采样后的所有正负样本(满足设定条件的anchor)索引拼接在一起  shape:512(一张图片正负样本总数为256)
         sampled_inds = torch.cat([sampled_pos_inds, sampled_neg_inds], dim=0)
         objectness = objectness.flatten()   # shape:434826
 
@@ -917,8 +920,8 @@ class RegionProposalNetwork(torch.nn.Module):
         # 计算边界框回归损失 -> 只需计算正样本的损失
         # 计算pred_bbox_deltas（预测proposal相对于anchor的偏移量）与regression_targets（gt相对于anchor的偏移量）的L1 loss
         box_loss = det_utils.smooth_l1_loss(
-            pred_bbox_deltas[sampled_pos_inds],     # 正样本anchor对应的proposal预测的边界框坐标偏移量（只计算正样本）
-            regression_targets[sampled_pos_inds],   # 正样本anchor对应的gt相对于anchor的边界框坐标偏移量（只计算正样本）
+            pred_bbox_deltas[sampled_pos_inds],     # RPN预测回归参数(预测proposal与对应gt的中心坐标偏移量和宽高的缩放量)（只计算正样本）
+            regression_targets[sampled_pos_inds],   # 每个anchor对应gt的回归参数(anchor与对应gt的中心坐标偏移量和宽高的缩放量)（只计算正样本）
             beta=1 / 9,
             size_average=False,
         ) / (sampled_inds.numel())
@@ -971,12 +974,12 @@ class RegionProposalNetwork(torch.nn.Module):
         # features是所有预测特征层组成的OrderedDict
         features = list(features.values())  # 其中每一个预测特征图层中元素的大小为：[BS, C, H, W]
 
-        # 计算每个预测特征层上的预测目标概率和bboxes regression参数
+        # 计算每个预测特征层上的预测目标概率和预测的bboxes regression(预测proposal与对应gt的中心坐标偏移量和宽高的缩放量)
         # objectness和pred_bbox_deltas都是list, 带FPN索引：[0, 1, 2, 3, 4], 不带FPN索引：[0]
-        # 每个预测特征层上的预测目标概率：
+        # 每个预测特征层上每个cell生成的anchor被预测为前景的分数(这里只有前景和背景两个类)：
         #   带FPN：有5个特征层，每个特征层的shape：torch.Size([2, 3, 200, 304])
         #   不带FPN：只有一个特征层，特征层的shape：torch.Size([2, 15, 200, 304])
-        # 每个预测特征层上的预测bboxes regression参数：
+        # 每个预测特征层上每个cell上生成的anchor对应gt预测bboxes regression参数：
         #   带FPN：有5个特征层，每个特征层的shape：torch.Size([2, 12, 200, 304])
         #   不带FPN：只有一个特征层，特征层的shape：torch.Size([2, 60, 200, 304])
         objectness, pred_bbox_deltas = self.head(features)
@@ -1010,29 +1013,31 @@ class RegionProposalNetwork(torch.nn.Module):
 
         # apply pred_bbox_deltas to anchors to obtain the decoded proposals
         # note that we detach the deltas because Faster R-CNN do not backprop through the proposals
-        # 将一个batch预测的所有bbox regression参数应用到anchors上得到proposal坐标信息
+        # 将一个batch预测的所有bbox regression参数应用到anchors上得到预测proposal坐标信息
         proposals = self.box_coder.decode(pred_bbox_deltas.detach(), anchors)   # torch.Size([434826, 1, 4])
         # 将获取的所有proposals坐标信息分配到一个batch中不同的图片上
         proposals = proposals.view(num_images, -1, 4)   # [BS, anchor数量，4]  torch.Size([2, 217413, 4])
 
-        # 筛除小boxes框，nms处理，根据预测概率获取前post_nms_top_n个目标
+        # 筛除小boxes(proposal)框，nms处理，根据预测概率获取前post_nms_top_n个目标
+        # boxes：筛选后保留的proposal坐标信息， scores：筛选后保留proposal对应的前景概率值(里面用sigmoid方法将类别分数转化为概率值)
         boxes, scores = self.filter_proposals(proposals, objectness, images.image_sizes, num_anchors_per_level)
 
         losses = {}
         if self.training:   # 如果是训练模式则计算损失
             assert targets is not None
-            # 计算每个anchors最匹配的gt，并将anchors进行分类，前景，背景以及废弃的anchors
-            #       正样本anchor匹配对应的gt坐标信息
-            #       负样本和丢弃的样本匹配为索引为0的gt坐标信息
-            labels, matched_gt_boxes = self.assign_targets_to_anchors(anchors, targets)
+            # 计算每个anchors最匹配的gt，并将所有anchors进行分类，前景为1，背景0以及废弃的anchors为-1
+            #       matched_gt_boxes：anchor匹配对应的gt坐标信息(正样本anchor对应的gt坐标信息是正确的，负样本anchor对应gt坐标信息是不准确的)
+            #       labels:正样本为1，负样本为0，丢弃的样本为-1
+            labels, matched_gt_boxes = self.assign_targets_to_anchors(anchors,  # 所有的anchor
+                                                                      targets)
             # 结合anchors以及对应的gt，计算regression参数(anchor对应gt的坐标偏移量和缩放量)
-            regression_targets = self.box_coder.encode(matched_gt_boxes,  # 每个anchor所匹配的GT坐标
+            regression_targets = self.box_coder.encode(matched_gt_boxes,  # 所有anchor所匹配的GT坐标
                                                        anchors)     # 每个anchors的坐标
             loss_objectness, loss_rpn_box_reg = self.compute_loss(
-                                                objectness,     # 预测的目标分数
-                                                pred_bbox_deltas,   # 预测的边界框坐标偏移量
+                                                objectness,     # RPN预测proposal对应的类别分数
+                                                pred_bbox_deltas,   # RPN预测回归参数(预测proposal与对应gt的中心坐标偏移量和宽高的缩放量)
                                                 labels,     # anchor对应的标签(正样本标签为1，负样本标签为0，丢弃的样本标签为-1)
-                                                regression_targets)  # 每个anchor对应的gt相对于anchor的回归参数
+                                                regression_targets)  # 每个anchor对应gt的回归参数(anchor与对应gt的中心坐标偏移量和宽高的缩放量)
 
             losses = {
                 "loss_objectness": loss_objectness,
