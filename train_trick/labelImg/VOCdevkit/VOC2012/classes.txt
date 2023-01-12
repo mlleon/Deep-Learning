@@ -1,0 +1,4 @@
+duck
+cat
+dog
+person
