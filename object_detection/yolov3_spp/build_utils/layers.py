@@ -34,7 +34,7 @@ class FeatureConcat(nn.Module):
         self.multiple = len(layers) > 1  # multiple layers flag
 
     def forward(self, x, outputs):  # 输入的特征矩阵x没有用到
-        # outputs和之前的output_filters不是同一个变量，outputs是在Darknet类正向传播中创建(outputs是一个特征层的全部输出信息)
+        # output_filters是某个特征层的chanel，outputs是在Darknet类正向传播中创建(outputs是一个特征层的全部输出信息)
         return torch.cat([outputs[i] for i in self.layers], 1) if self.multiple else outputs[self.layers[0]]
 
 
@@ -59,6 +59,7 @@ class WeightedFeatureFusion(nn.Module):  # weighted sum of 2 or more layers http
         # Fusion
         nx = x.shape[1]  # input channels
         for i in range(self.n - 1):
+            # 获取捷径分支输入特征矩阵
             a = outputs[self.layers[i]] * w[i + 1] if self.weight else outputs[self.layers[i]]  # feature to add
             na = a.shape[1]  # feature channels
 

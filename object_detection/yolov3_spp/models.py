@@ -14,6 +14,7 @@ def create_modules(modules_defs: list, img_size):
             1. module_list: 网络中各个层
             2. routs_binary: mask（被后面层调用的层结构位置为True） —— 记录哪一层的输入要被保存
     """
+    # 如果img_size=412，则执行[img_size] * 2；如果img_size=(412, 412)则不变
     img_size = [img_size] * 2 if isinstance(img_size, int) else img_size
     """
     1.pop方法删除解析cfg列表中的第一个元素配置(对应[net]的配置)
@@ -25,8 +26,9 @@ def create_modules(modules_defs: list, img_size):
     output_filters = [3]  # output_filters记录搭建每个模块输出特征矩阵的channel，3是一个初始值(表示RGB图像)，并不是输出特征矩阵的channel
     module_list = nn.ModuleList()   # 搭建网络过程中依次将每个模块添加到module_list
 
-    # routs: routs中记录网络层的索引，统计哪些特征层的输出会被后续的层使用到(可能是特征融合，也可能是拼接)
-    #   routs=[1, 5, 8, 12, 15, 18, 21, 24, 27, 30, 33, 37, 40, 43, 46, 49, 52, 55, 58, 62, 65, 68, 71]
+    # routs: routs中记录网络层的索引，统计哪些特征层的输出会被后续的层使用到(可能是特征融合，也可能是特征拼接)
+    #   routs=[1, 5, 8, 12, 15, 18, 21, 24, 27, 30, 33, 37, 40, 43, 46, 49, 52, 55, 58, 62, 65, 68, 71,
+    #          77, 77, 82, 80, 78, 77, 88, 86, 92, 61, 100, 98, 104, 36, 112]
     routs = []  # list of layers which rout to deeper layers
     yolo_index = -1     # 初始化yolo_layer层索引
 
@@ -37,10 +39,10 @@ def create_modules(modules_defs: list, img_size):
         3.yolov3_spp中每个convolutional都有stride(每个卷积层都有stride)，所以其实不用管(mdef['stride_y'], mdef["stride_x"])
     """
     for i, mdef in enumerate(modules_defs):
-        modules = nn.Sequential()   # 如果一个模块包含多个层结构，就将它传入到Sequential中
+        modules = nn.Sequential()   # 如果一个block模块包含多个层结构，就将它传入到Sequential中
         if mdef["type"] == "convolutional":     # 用mdef["type"]来依次判断每个模块的类型
             bn = mdef["batch_normalize"]  # 1 or 0 / use or not
-            filters = mdef["filters"]   # 获取是卷积层模块输出特征矩阵的channels
+            filters = mdef["filters"]   # 获取卷积层block输出特征矩阵的channels
             k = mdef["size"]  # kernel size
             # YOLO v3-SPP中每一个Convolutional都有stride参数，所以可以不用管else (mdef['stride_y'], mdef["stride_x"]这个参数
             stride = mdef["stride"] if "stride" in mdef else (mdef['stride_y'], mdef["stride_x"])
@@ -55,7 +57,7 @@ def create_modules(modules_defs: list, img_size):
             else:
                 raise TypeError("conv2d filter size must be int type.")
 
-            if bn:
+            if bn:  # 如果bn=1，说明该卷积为普通卷积，需要添加BatchNorm2d
                 modules.add_module("BatchNorm2d", nn.BatchNorm2d(filters))
             else:   # 只有yolo的predictor(预测器层)的卷积操作没有bn，预测器的输出会传到后面yolo layer中，需要将预测器层索引添加到routs中
                 routs.append(i)  # detection output (goes into yolo layer)
@@ -68,11 +70,13 @@ def create_modules(modules_defs: list, img_size):
         elif mdef["type"] == "BatchNorm2d":
             pass
 
+        # MaxPooling只出现在SPP结构中
         elif mdef["type"] == "maxpool":     # 5×5、9×9、13×13
             k = mdef["size"]  # kernel size
             stride = mdef["stride"]
             modules = nn.MaxPool2d(kernel_size=k, stride=stride, padding=(k - 1) // 2)
 
+        # 在原版YOLO v3中是没有上采样层的，在YOLO v3-SPP中上采样层出现在两个地方
         elif mdef["type"] == "upsample":
             if ONNX_EXPORT:  # explicitly state size, avoid scale_factor
                 g = (yolo_index + 1) * 2 / 32  # gain
@@ -80,11 +84,10 @@ def create_modules(modules_defs: list, img_size):
             else:
                 modules = nn.Upsample(scale_factor=mdef["stride"])
 
+        # routs记录特征层索引序号——该特征层的输出会被后面的层使用到(可能是特征融合，也可能是拼接)
         elif mdef["type"] == "route":
             layers = mdef["layers"]
             """
-                filters: 记录经过route层(特征拼接)后输出特征矩阵的channels
-                
                 遍历layers这个列表，得到这个list中的每一个值l。
                     + 如果l>0的话，则需要output_filters[l + 1]。这是因为在定义output_filfer时是这样定义的：
                         output_filter = [3]，即创建了一个list且第0个元素的值为3（输入特征图通道数为3）。
@@ -96,16 +99,17 @@ def create_modules(modules_defs: list, img_size):
                     + 当layers只有一个值的时候，得到的结果就是指向模块输出特征图的通道数 -> 一个数
                     + 当layers为多个值时，就将layers中指向一系列层结构的输出特征图的通道数求和∑，得到最终concat后的channel -> 一个数
             """
+            # filters: 记录经过route层(特征拼接)后输出特征矩阵的channels
             filters = sum([output_filters[l + 1 if l > 0 else l] for l in layers])
-            """
-                routs: 模块的索引（记录后续会被使用的模块输出特征图的模块索引，从头到尾每一层的idx）
 
+            """
                 [i + l if l < 0 else l for l in layers]：
                     遍历layers中的每一个元素l：
                         + 当l<0时，说明要记录模块的索引是相对索引（即根据当前route模块往前推）索引为i+l（其中i为当前route模块的索引）
                             例如：当l=-1，即使用route层前面一个模块，所以模块的idx应该为当前route的索引值-1，即i-1=i+l
                         + 当l>0，说明要记录模块的索引是绝对索引（即从网络整体来看的），所以直接记录为l即可
             """
+            # 记录后续会被使用的模块输出特征图的模块索引，从头到尾每一层的idx
             routs.extend([i + l if l < 0 else l for l in layers])
             modules = FeatureConcat(layers=layers)
 
@@ -163,10 +167,12 @@ def create_modules(modules_defs: list, img_size):
         #   因为只有这些层当中它的特征图channel会发生变化，[maxpool][upsample]是不会改变特征图channel的
         output_filters.append(filters)
 
+    """将调试断点设置在此处，可以查看modules_defs、output_filters和routs完整数据"""
     # 构建一个routs_binary长度为len(modules_defs)，元素全部是False的列表(yolov3-spp.cfg有多少个模块就有多少个False)
     routs_binary = [False] * len(modules_defs)
 
     # 遍历routs列表，将特征层的输出会被后续的层使用到的模块位置设置为True
+    # 执行该逻辑后，routs_binary = [False, True, False, False, False, True, False, False, True, False, False, ...]
     for i in routs:
         routs_binary[i] = True
 
@@ -196,15 +202,14 @@ class YOLOLayer(nn.Module):
         self.no = nc + 5  # number of outputs (85: x, y, w, h, obj, cls1, ...)
         # nx, ny所用预测特征图的宽度和高度（16×16, 32×32, 64×64）; ng为grid cell的size -> 这里简单初始化为0
         self.nx, self.ny, self.ng = 0, 0, (0, 0)  # initialize number of x, y gridpoints
+        self.grid = None
 
         """
             因为传入anchor priors的大小都是针对原图的尺度
                 anchors = 10,13,  16,30,  33,23,  30,61,  62,45,  59,119,  116,90,  156,198,  373,326
             为了将其映射到预测特征图上，因此需要进行下采样（32, 16, 8）     
         """
-        # self.anchor_vec.shape: torch.Size([3, 2])
-        #   3为anchor缩放到对应特征图grid后的3种不同尺度
-        #   2为anchor缩放到对应特征图grid后的W和H
+        # self.anchor_vec.shape: torch.Size([3, 2])，3为anchor缩放到对应特征图grid后的3种不同尺度，2为anchor缩放到对应特征图grid后的W和H
         self.anchor_vec = self.anchors / self.stride   # 将anchors大小缩放到对应特征图grid的尺度
 
         """
@@ -220,11 +225,89 @@ class YOLOLayer(nn.Module):
         """
         self.anchor_wh = self.anchor_vec.view(1, self.na, 1, 1, 2)
 
-        self.grid = None
-
         if ONNX_EXPORT:
             self.training = False
             self.create_grids((img_size[1] // stride, img_size[0] // stride))  # number x, y grid points
+
+    def forward(self, p):
+        """
+        对YOLO predictor的输出进行处理的前向传播
+        Args:
+            p: predictor预测得到的参数特征矩阵，
+                训练模式：p.shape：torch.Size([4, 75, 19, 19])
+                测试模式：p.shape:torch.Size([1, 75, 16, 16])
+
+        Returns:
+            io: [BS, anchor priors数量*grid_H*grid_W]: 只对predictor的输出做view和permute处理(数值没有经过任何处理)
+            p: [BS, anchor priors数量, grid_H, grid_W, (5+20)] -> 最终目标边界框参数（里面的数值加上了cell的左上角坐标）
+        """
+        if ONNX_EXPORT:
+            bs = 1  # batch size
+        else:
+            # _: predictor生成参数（这里我们不使用）, ny:grid_H , nx:grid_W
+            bs, _, ny, nx = p.shape  # batch_size, predict_param(75), grid(16), grid(16)
+
+            # 判断self.nx和self.ny是否等于当前predictor的预测特征图的高度和宽度：
+            #     不相等：grid cell发生变化 -> 需重新生成grid cell参数
+            #     或者如果self.grid is None（第一次正向传播）-> 也需要生成grid cell参数
+            # 训练模式：只更新self.anchor_vec和self.anchor_wh的device，
+            #     self.anchor_wh=[BS, cell生成anchor个数, grid高度, grid宽度, 缩放到grid后每个anchor的宽和高]
+            # 测试模式：生成self.grid=[BS, cell生成anchor个数, grid高度, grid宽度, grid每个cell左上角的坐标]
+            if (self.nx, self.ny) != (nx, ny) or self.grid is None:  # fix no grid bug
+                self.create_grids((nx, ny), p.device)
+
+        """
+            p: predictor预测得到的特征矩阵
+                p.shape: [4, 75, 16, 16] = [BS, (5+20)*3, grid_H, grid_W]
+                ① view: [BS, (5+20)*3, grid, grid] -> [BS, anchor数量, (5+20), grid_H, grid_W]=[BS, 3, 25, grid_H, grid_W]
+                ② permute: [BS, anchor数量, (5+20), grid_H, grid_W] -> [BS, anchor数量, grid_H, grid_W, (5+20):xywh + obj + classes]
+                ③ contiguous: 使该tensor在内存中连续(通过permute方法改变原有tensor的排列顺序，在原有内存中不再连续了)
+        """
+        p = p.view(bs, self.na, self.no, self.ny, self.nx).permute(0, 1, 3, 4, 2).contiguous()  # prediction
+
+        if self.training:
+            return p
+        elif ONNX_EXPORT:
+            # Avoid broadcasting for ANE operations
+            m = self.na * self.nx * self.ny  # 3*
+            ng = 1. / self.ng.repeat(m, 1)
+            grid = self.grid.repeat(1, self.na, 1, 1, 1).view(m, 2)
+            anchor_wh = self.anchor_wh.repeat(1, 1, self.nx, self.ny, 1).view(m, 2) * ng
+
+            p = p.view(m, self.no)
+            # xy = torch.sigmoid(p[:, 0:2]) + grid  # x, y
+            # wh = torch.exp(p[:, 2:4]) * anchor_wh  # width, height
+            # p_cls = torch.sigmoid(p[:, 4:5]) if self.nc == 1 else \
+            #     torch.sigmoid(p[:, 5:self.no]) * torch.sigmoid(p[:, 4:5])  # conf
+            p[:, :2] = (torch.sigmoid(p[:, 0:2]) + grid) * ng  # x, y
+            p[:, 2:4] = torch.exp(p[:, 2:4]) * anchor_wh  # width, height
+            p[:, 4:] = torch.sigmoid(p[:, 4:])
+            p[:, 5:] = p[:, 5:self.no] * p[:, 4:5]
+            return p
+        else:  # inference
+            # [bs, anchor, grid, grid, xywh + obj + classes]
+            io = p.clone()  # inference output
+            """
+                tensor[..., a:b]: https://blog.csdn.net/weixin_44878336/article/details/124847855
+                io(predictor预测得到的特征矩阵view后的结果)：[BS, anchor数量, grid_H, grid_W, (5+20)]
+                    其中(5+20: t_x, t_y, t_w, t_h, obj, cls1, ...)
+                self.grid(predictor预测得到的特征矩阵的grid网格): self.grid=[BS, anchor数量, grid_H, grid_W, 2]
+                    其中(2：grid上每个cell左上角的坐标)
+                self.anchor_wh(缩放到对应predictor后的特征矩阵上的anchor)：self.anchor_wh=[BS, anchor数量, grid_H, grid_W, 2]
+                    其中(2：缩放到对应grid后每个anchor的宽度和高度)
+            """
+            # io[..., :2]是预测边界框的中心点坐标到对应cell的偏移量(t_x,t_y), self.grid[..., :2]为每一个坐标为grid cell的左上角坐标
+            # 将预测的t_x,t_y偏移量经过Sigmoid函数进行限制并加上对应grid cell左上角的坐标参数-> 预测边界框x,y坐标在对应grid网格中的绝对中心点坐标
+            io[..., :2] = torch.sigmoid(io[..., :2]) + self.grid  # xy 计算在feature map上预测边界框的x和y坐标
+            # io[..., 2:4]: 预测边界框的W和H, self.anchor_wh[..., :2]:缩放到对应grid后每个anchor的宽度和高度
+            io[..., 2:4] = torch.exp(io[..., 2:4]) * self.anchor_wh  # 计算在feature map上预测边界框的w和h
+            # io[..., :4]: 预测边界框的中心坐标(x,y)和边界框的W和H
+            io[..., :4] *= self.stride  # 在feature map上预测边界框中心坐标(x,y)和边界框w和h映射回原图尺度
+            # io[..., 4:]：预测边界框对应置信度分数和各个类别分数
+            torch.sigmoid_(io[..., 4:])  # 通过Sigmoid激活函数获取预测边界框对应置信度概率和各类别概率
+
+            # [BS, anchor数量, grid_H, grid_W, (5+20)] -> [BS, -1, (5+20)] = [BS, anchor数量*grid_H*grid_W]
+            return io.view(bs, -1, self.no), p  # view [1, 3, 13, 13, 85] as [1, 507, 85]
 
     def create_grids(self, ng=(13, 13), device="cpu"):
         """
@@ -236,6 +319,7 @@ class YOLOLayer(nn.Module):
         :return: self.grid: [1, 1, H, W, 2] = [BS, anchor的个数，grid高度，grid宽度，grid每个cell左上角的坐标]
                             前面两个[1,1]会根据广播机制自动扩充
         """
+        # 前向传播过程中使用predictor对应特征图大小 ng=(nx, ny)，重新对self.nx, self.ny和self.ng赋值
         self.nx, self.ny = ng
         self.ng = torch.tensor(ng, dtype=torch.float)
 
@@ -288,97 +372,13 @@ class YOLOLayer(nn.Module):
             self.anchor_vec = self.anchor_vec.to(device)
             self.anchor_wh = self.anchor_wh.to(device)
 
-    def forward(self, p):
-        """
-        对YOLO predictor的输出进行处理的前向传播
-        Args:
-            p: predictor预测得到的特征矩阵，
-                训练模式：p.shape：torch.Size([4, 75, 19, 19])
-                测试模式：p.shape:torch.Size([1, 75, 16, 16])
-
-        Returns:
-            io: [BS, anchor priors数量*grid_H*grid_W]: 只对predictor的输出做view和permute处理(数值没有经过任何处理)
-            p: [BS, anchor priors数量, grid_H, grid_W, (5+20)] -> 最终目标边界框参数（里面的数值加上了cell的左上角坐标）
-        """
-        if ONNX_EXPORT:
-            bs = 1  # batch size
-        else:
-            # _: predictor生成参数（这里我们不使用）, ny:grid_H , nx:grid_W
-            bs, _, ny, nx = p.shape  # batch_size, predict_param(75), grid(16), grid(16)
-
-            # 判断self.nx和self.ny是否等于当前predictor的预测特征图的高度和宽度：
-            #     不相等：grid cell发生变化 -> 需重新生成grid cell参数
-            #     或者如果self.grid is None（第一次正向传播）-> 也需要生成grid cell参数
-            # 训练模式：只更新self.anchor_vec和self.anchor_wh的device，
-            #     self.anchor_wh=[BS, cell生成anchor个数, grid高度, grid宽度, 缩放到grid后每个anchor的宽和高]
-            # 测试模式：生成self.grid=[BS, cell生成anchor个数, grid高度, grid宽度, grid每个cell左上角的坐标]
-            if (self.nx, self.ny) != (nx, ny) or self.grid is None:  # fix no grid bug
-                self.create_grids((nx, ny), p.device)
-
-        # view: (batch_size, 255, 13, 13) -> (batch_size, 3, 85, 13, 13)
-        # permute: (batch_size, 3, 85, 13, 13) -> (batch_size, 3, 13, 13, 85)
-        # [bs, anchor, grid, grid, xywh + obj + classes]
-        """
-            p: predictor预测得到的特征矩阵
-                p.shape: [4, 75, 16, 16] = [BS, (5+20)*3, grid_H, grid_W]
-                ① view: [BS, (5+20)*3, grid, grid] -> [BS, anchor数量, (5+20), grid_H, grid_W]=[BS, 3, 25, grid_H, grid_W]
-                ② permute: [BS, anchor数量, (5+20), grid_H, grid_W] -> [BS, anchor数量, grid_H, grid_W, (5+20)]
-                ③ contiguous: 使该tensor在内存中连续(通过permute方法改变原有tensor的排列顺序，在原有内存中不再连续了)
-        """
-        # p:[BS, anchor数量, grid_H, grid_W, (5+20)]
-        p = p.view(bs, self.na, self.no, self.ny, self.nx).permute(0, 1, 3, 4, 2).contiguous()  # prediction
-
-        if self.training:
-            return p
-        elif ONNX_EXPORT:
-            # Avoid broadcasting for ANE operations
-            m = self.na * self.nx * self.ny  # 3*
-            ng = 1. / self.ng.repeat(m, 1)
-            grid = self.grid.repeat(1, self.na, 1, 1, 1).view(m, 2)
-            anchor_wh = self.anchor_wh.repeat(1, 1, self.nx, self.ny, 1).view(m, 2) * ng
-
-            p = p.view(m, self.no)
-            # xy = torch.sigmoid(p[:, 0:2]) + grid  # x, y
-            # wh = torch.exp(p[:, 2:4]) * anchor_wh  # width, height
-            # p_cls = torch.sigmoid(p[:, 4:5]) if self.nc == 1 else \
-            #     torch.sigmoid(p[:, 5:self.no]) * torch.sigmoid(p[:, 4:5])  # conf
-            p[:, :2] = (torch.sigmoid(p[:, 0:2]) + grid) * ng  # x, y
-            p[:, 2:4] = torch.exp(p[:, 2:4]) * anchor_wh  # width, height
-            p[:, 4:] = torch.sigmoid(p[:, 4:])
-            p[:, 5:] = p[:, 5:self.no] * p[:, 4:5]
-            return p
-        else:  # inference
-            # [bs, anchor, grid, grid, xywh + obj + classes]
-            io = p.clone()  # inference output
-            """
-                tensor[..., a:b]: https://blog.csdn.net/weixin_44878336/article/details/124847855
-                io(predictor预测得到的特征矩阵view后的结果)：[BS, anchor数量, grid_H, grid_W, (5+20)]
-                    其中(5+20: t_x, t_y, t_w, t_h, obj, cls1, ...)
-                self.grid(predictor预测得到的特征矩阵的grid网格): self.grid=[BS, anchor数量, grid_H, grid_W, 2]
-                    其中(2：grid上每个cell左上角的坐标)
-                self.anchor_wh(缩放到对应predictor后的特征矩阵上的anchor)：self.anchor_wh=[BS, anchor数量, grid_H, grid_W, 2]
-                    其中(2：缩放到对应grid后每个anchor的宽度和高度)
-            """
-            # io[..., :2]是预测边界框的中心点坐标到对应cell的偏移量(t_x,t_y), self.grid[..., :2]为每一个坐标为grid cell的左上角坐标
-            #    将预测的t_x,t_y偏移量经过Sigmoid函数进行限制并加上对应grid cell左上角的坐标参数-> 预测边界框x,y坐标在对应grid网格中的绝对中心点坐标
-            io[..., :2] = torch.sigmoid(io[..., :2]) + self.grid  # xy 计算在feature map上预测边界框的x和y坐标
-            # io[..., 2:4]: 预测边界框的W和H, self.anchor_wh[..., :2]:缩放到对应grid后每个anchor的宽度和高度
-            io[..., 2:4] = torch.exp(io[..., 2:4]) * self.anchor_wh  # 计算在feature map上预测边界框的w和h
-            # io[..., :4]: 预测边界框的中心坐标(x,y)和边界框的W和H
-            io[..., :4] *= self.stride  # 在feature map上预测边界框中心坐标(x,y)和边界框w和h映射回原图尺度
-            # io[..., 4:]：预测边界框对应置信度分数和各个类别分数
-            torch.sigmoid_(io[..., 4:])  # 通过Sigmoid激活函数获取预测边界框对应置信度概率和各类别概率
-
-            # [BS, anchor数量, grid_H, grid_W, (5+20)] -> [BS, -1, (5+20)] = [BS, anchor数量*grid_H*grid_W]
-            return io.view(bs, -1, self.no), p  # view [1, 3, 13, 13, 85] as [1, 507, 85]
-
 
 class Darknet(nn.Module):
     """
     YOLOv3 spp object detection model
 
     Args:
-        cfg:  模型配置文件
+        cfg:  模型配置文件路径
         img_size: 输入图片的尺寸（在训练中不起任何作用，只在导出为onnx模型时使用）
         verbose: 是否打印模型每个模块的详细信息，默认False不打印
     """
@@ -392,6 +392,7 @@ class Darknet(nn.Module):
         # 根据解析的网络结构一层一层去搭建。create_modules返回module_list模块和routs_binary
         #       module_list: 网络中各个层（YOLO v3-SPP所有的模型结构）
         #       routs_binary: mask（被后面层调用的层结构位置为True） —— 记录哪一层的输入要被保存
+        # self.routs = routs_binary = [False, True, False, False, False, True, False, False, True, False, False, ...]
         self.module_list, self.routs = create_modules(self.module_defs, img_size)
 
         # 通过get_yolo_layers这个方法获取搭建3个[yolo] layer的索引,  YOLO v3-SPP中 YOLOLayer的索引为[89, 101, 113]
@@ -414,7 +415,7 @@ class Darknet(nn.Module):
 
     def forward_once(self, x, verbose=False):
         r"""
-        YOLO v3-SPP 正向传播(套娃了属于是)
+        YOLO v3-SPP 一次正向传播(套娃了属于是)
         Args:
             x: 输入图片数据[BS, C, H, W]
             verbose: 是否打印模型每层的信息
@@ -427,9 +428,9 @@ class Darknet(nn.Module):
 
         for i, module in enumerate(self.module_list):
             """
-                i: 索引
+                i: 模块索引
                 module：ModuleList里面的内容，有：
-                    + nn.Sequential -> [convolutional]
+                    + nn.Sequential -> [convolutional set]
                     + WeightedFeatureFusion -> [shortcut]
                     + FeatureConcat -> [route]
                     + Upsample -> [upsample]
@@ -460,7 +461,7 @@ class Darknet(nn.Module):
                         p: [BS, anchor priors数量, grid_H, grid_W, (5+20)] -> 最终目标边界框参数（
                             里面的数值加上了cell的左上角坐标）
                 """
-                yolo_out.append(module(x))  # routs就是真假矩阵列表，判断哪些层输出后面要用。如果是False后面用不到，这个位置存空列表
+                yolo_out.append(module(x))
             else:  # run module directly, i.e. mtype = 'convolutional', 'upsample', 'maxpool', 'batchnorm2d' etc.
                 x = module(x)
 
@@ -470,12 +471,14 @@ class Darknet(nn.Module):
                     如果为False, 则存入一个空list -> 不保存x
             """
             # out保存每一个模块的输出(out收集后面需要用到的每个模块的输出)
+            # routs就是真假矩阵列表，判断哪些层输出后面要用。如果是False后面用不到，这个位置存空列表
+            # self.routs = [False, True, False, False, False, True, False, False, True, False, False, ...]
             out.append(x if self.routs[i] else [])
             if verbose:
                 print('%g/%g %s -' % (i, len(self.module_list), name), list(x.shape), str)
                 str = ''
 
-        if self.training:  # train模式YOLOLayer只返回p，只需要yolo_out就行
+        if self.training:  # train模式YOLOLayer的返回值yolo_out只包含p
             return yolo_out
         elif ONNX_EXPORT:  # export
             # x = [torch.cat(x, 0) for x in zip(*yolo_out)]
@@ -498,24 +501,7 @@ class Darknet(nn.Module):
             #     return torch.empty([0, 85])
 
             return p
-        else:  # inference or test
-            """
-                yolo_out是一个list，里面有3个元素，每个元素对应一个YOLOLayer的输出
-                    io: [BS, anchor priors数量*grid_H*grid_W] -> 只对predictor的输出做view和permute处理
-                        数值没有经过任何处理的
-                    p: [BS, anchor priors数量, grid_H, grid_W, (5+20)] -> 最终目标边界框参数（
-                        里面的数值加上了cell的左上角坐标）
-
-                x: io
-                p: YOLOLayer对x进行调整后的结果：即最终的目标预测框
-
-                x和p均包含下面信息：（元素的位置不同）
-                    + 中心点坐标(x与p数值不同)
-                    + 宽高(x与p数值不同)
-                    + 置信度confidence
-                    + 类别信息
-            """
-            # 推理验证模式yolo_layer返回两个值，以zip方法分开赋值给x和p两个列表
+        else:  # 推理验证模式yolo_layer返回两个值，以zip方法分开赋值给x和p两个列表
             """
                 x, p = zip(*yolo_out)：
                     x: 将每个predictor分支中的结果（即io中的每个元素 -> 最终的预测结果）

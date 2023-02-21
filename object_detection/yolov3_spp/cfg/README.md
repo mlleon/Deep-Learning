@@ -10,6 +10,7 @@
 * activation=leaky —— 使用什么激活函数
 
 ## 2 [shortcut]	—— 捷径分支：
+* shortcut捷径分支只在残差结构中
 * from=-3	—— 与前面哪一层的输出进行融合（两个shape完全一样的特征图相加的操作）
 * activation=linear —— 线性激活（对输入不做任何处理 — y=x）
 ![shortcut](https://github.com/mlleon/dl_code/blob/main/object_detection/yolov3_spp/cfg/shortcut.png) 
@@ -29,7 +30,7 @@ MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stri
 * [route]取多个值
   * layers=-1,-3,-5,-6, 当layer有多个值的时候，代表将多个输出进行拼接（在通道维度进行拼接 —— shape相同，channel相加）
 
-## 5 搭建SPP：
+## 5 搭建SPP：理解[route]
 为了更加容易理解[route]，看一下SPP是怎么在yolov3-spp.cfg文件中搭建的。configuration对应的内容如下：
 * SPP前的一个卷积层[convolutional] 
   * [convolutional] 
@@ -62,7 +63,11 @@ MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stri
   * [route]
     * layers=-1,-3,-5,-6
 
-通过SPP图我们可以看到，特征图在进入SPP之前是经过一个Conv层的 --> MaxPooling层（5×5/1） --> route层（layer=-2，layer只有一个值，所以是指向-2层的） --> 将输出指向Conv层 --> MaxPooling层（9×9/1） --> route层（layer=-4，layer只有一个值，所以是指向-4层的） --> 将输出指向Conv层 --> MaxPooling层（13×13/1） -–> route（layer=-1,-3,-5,-6，layer有多个数值表示将多层的输出进行维度拼接 —— shape相同，channel相加）。对于layer来说，当前层为0
+对于当前的route层来说，layers=0
+* --> SPP之前出的Conv层 --> MaxPooling层（5×5/1） --> route层（layer=-2，layer只有一个值，所以是指向-2层的） 
+* --> SPP之前出的Conv层 --> MaxPooling层（9×9/1） --> route层（layer=-4，layer只有一个值，所以是指向-4层的） 
+* --> SPP之前出的Conv层 --> MaxPooling层（13×13/1） -–> route层（layer=-1,-3,-5,-6，layer有多个数值表示将多层的输出进行维度拼接）
+* 注：stride为1，不改变输出特征图的宽和高，特征图的宽和高相同，channel相加
  
 ## 6 [upsample] —— 上采样层:
 * stride=2 —— 上采样倍率
@@ -72,7 +77,7 @@ MaxPooling的padding = (kernel_size - 1) // 2 , 这说明如果MaxPooling的stri
     * SPP第一个predict layer到第二个predict layer之间
     * SPP第二个predict layer到第三个predict layer之间
     
-这里上采样层的作用是：将特征图的 H , W H, W H,W放大到原来的2倍。
+这里上采样层的作用是：将特征图的 H , W 放大到原来的2倍。
 ## 7 [yolo] —— yolo层:
 这里的yolo层并不是用于预测的predictor，yolo层是接在每个predictor之后的结构。它存在的意义是对predictor的结果进行处理以及生成一系列的anchors
 * mask = 6,7,8  —— 使用哪些anchor priors（对应的是索引，从0开始）
