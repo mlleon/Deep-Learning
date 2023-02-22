@@ -162,6 +162,64 @@ def box_iou(box1, box2):
     return inter / (area1[:, None] + area2 - inter)  # iou = inter / (area1 + area2 - inter)
 
 
+"""
+wh1.shape=torch.Size([3, 2])  ->  wh1.shape=torch.Size([3, 1, 2])
+wh1:tensor([[ 3.62500,  2.81250],   ->  tensor([[[ 3.62500,  2.81250]],
+            [ 4.87500,  6.18750],               [[ 4.87500,  6.18750]],
+            [11.65625, 10.18750]])              [[11.65625, 10.18750]]])
+
+wh2.shape=torch.Size([10, 2])  ->  wh2.shape=torch.Size([1, 10, 2])         
+wh2:tensor([[ 2.76728,  6.34200],   ->  tensor([[[ 8.45380, 10.67119],
+            [ 3.51571,  5.41800],                [ 3.51571,  5.41800],                   
+            [11.11107, 14.82600],                [11.11107, 14.82600],                    
+            [ 6.33036, 11.25601],                [ 6.33036, 11.25601],                     
+            [13.60800,  3.28126],                [13.60800,  3.28126],                     
+            [ 1.05000,  1.97399],                [ 1.05000,  1.97399],                     
+            [ 3.82200,  5.37600],                [ 3.82200,  5.37600],                      
+            [ 2.34196,  2.35199],                [ 2.34196,  2.35199],                     
+            [ 3.73800,  1.51200],                [ 3.73800,  1.51200],                    
+            [ 3.65400,  1.80601]])               [ 3.65400,  1.80601]]])    
+               
+torch.min(wh1, wh2):            
+        tensor([[[ 3.6250,  2.8125],
+                 [ 3.5157,  2.8125],
+                 [ 3.6250,  2.8125],
+                 [ 3.6250,  2.8125],
+                 [ 3.6250,  2.8125],
+                 [ 1.0500,  1.9740],
+                 [ 3.6250,  2.8125],
+                 [ 2.3420,  2.3520],
+                 [ 3.6250,  1.5120],
+                 [ 3.6250,  1.8060]],
+                [[ 4.8750,  6.1875],
+                 [ 3.5157,  5.4180],
+                 [ 4.8750,  6.1875],
+                 [ 4.8750,  6.1875],
+                 [ 4.8750,  3.2813],
+                 [ 1.0500,  1.9740],
+                 [ 3.8220,  5.3760],
+                 [ 2.3420,  2.3520],
+                 [ 3.7380,  1.5120],
+                 [ 3.6540,  1.8060]],
+                [[ 8.4538, 10.1875],
+                 [ 3.5157,  5.4180],
+                 [11.1111, 10.1875],
+                 [ 6.3304, 10.1875],
+                 [11.6562,  3.2813],
+                 [ 1.0500,  1.9740],
+                 [ 3.8220,  5.3760],
+                 [ 2.3420,  2.3520],
+                 [ 3.7380,  1.5120],
+                 [ 3.6540,  1.8060]]])  
+                   
+torch.min(wh1, wh2).prob(2):                   
+tensor([[ 10.1953,   9.8879,  10.1953,  10.1953,  10.1953,   2.0727,  10.1953,
+           5.5083,   5.4810,   6.5468],
+        [ 30.1641,  19.0481,  30.1641,  30.1641,  15.9961,   2.0727,  20.5471,
+           5.5083,   5.6519,   6.5992],
+        [ 86.1231,  19.0481, 113.1940,  64.4905,  38.2472,   2.0727,  20.5471,
+           5.5083,   5.6519,   6.5992]])                                                     
+"""
 def wh_iou(wh1, wh2):
     # Returns the nxm IoU matrix. wh1 is nx2, wh2 is mx2
     wh1 = wh1[:, None]  # [N,1,2]
@@ -375,50 +433,35 @@ def compute_loss(p, targets, model):  # predictions, targets, model
 
 def build_targets(p, targets, model):
     """
-    根据传入的信息得到所有的正样本
-    (匹配到GTBox的就是正样本)
     Args:
-        p: 模型的预测值 -> list
-            元素1： 16×16特征图的输出
-            元素2： 32×32特征图的输出
-            元素3： 64×64特征图的输出
-        targets: GT信息 -> Tensor
-            shape: [当前batch中目标的个数, 6]
-                6： [对应当前batch中的哪一张图片，x, y, w, h]    x, y, w, h为相对坐标信息
-        model: 模型 -> Darknet
-
-    Returns:
-        0. tcls: 每个正样本所匹配GTBox的类别
-        1. tbox: GTBox相对anchor的x,y偏移量以及w,h
-        2. indices: 所有正样本的信息
-            b:  匹配得到的所有正样本所对应的图片索引
-            a:  所有正样本对应的anchor模板索引
-            gj: 对应每一个正样本中心点的y坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
-            gi: 对应每一个正样本中心点的x坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
-        3. anch: 每个正样本所对应anchor模板的宽度和高度
-
+        p: 模型的预测值 -> list，shape: [BS, cell生成anchor的个数, grid宽, grid高, ((x, y, w, h) + c)]
+            元素1： 16×16特征图的输出：[BS, 3, 16, 16, 25] -> predictor 1（这里只是对应关系）
+            元素2： 32×32特征图的输出：[BS, 3, 32, 32, 25] -> predictor 2（这里只是对应关系）
+            元素3： 64×64特征图的输出：[BS, 3, 64, 64, 25] -> predictor 3（这里只是对应关系）
+        targets: GT信息 -> Tensor, shape: [当前batch中目标的个数, 6]
+                6： [当前batch中的哪张图片(img_index), 类别索引(obj_index), x, y, w, h]    x, y, w, h为相对坐标信息
+        model: 模型 -> Darknet网络模型
     """
     # Build targets for compute_loss(), input targets(image_idx,class,x,y,w,h)
     nt = targets.shape[0]   # 获取当前batch GT中的目标个数
     """
-        定义返回值list
+        定义Returns返回值list
             0. tcls: 每个正样本所匹配GTBox的类别
             1. tbox: GTBox相对anchor的x,y偏移量以及w,h
             2. indices: 所有正样本的信息
                 b:  匹配得到的所有正样本所对应的图片索引
                 a:  所有正样本对应的anchor模板索引
+                gi: 对应每一个正样本中心点的x坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）                
                 gj: 对应每一个正样本中心点的y坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
-                gi: 对应每一个正样本中心点的x坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
             3. anch: 每个正样本所对应anchor模板的宽度和高度
     """
     tcls, tbox, indices, anch = [], [], [], []
-    """
-        gain是针对每一个target目标的增益
-            目的是让GTBox的相对坐标转换为所属特征图上的绝对坐标
-    """
+
+    # gain是针对每一个target目标的增益, 目的是让GTBox的相对坐标转换为所属特征图上的绝对坐标
     gain = torch.ones(6, device=targets.device).long()  # normalized to gridspace gain
 
     multi_gpu = type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
+
     # 遍历每一个预测特征图（指导return的大循环）
     for i, j in enumerate(model.yolo_layers):  # j: [89, 101, 113] -> 对应模块的索引
         """
@@ -430,108 +473,103 @@ def build_targets(p, targets, model):
 
             anchors为对应yolo predictor[i]的anchors模板（一个预测特征图有3种anchor模板） -> Tensor[3, 2]
         """
-        # 获取该yolo predictor对应的anchors
-        # 注意anchor_vec是anchors缩放到对应特征层上的尺度
+        # 获取每个yolo predictor对应的anchors的宽和高，anchor_vec是anchors缩放到对应特征层上的尺度(宽和高)
         anchors = model.module.module_list[j].anchor_vec if multi_gpu else model.module_list[j].anchor_vec
         # p[i].shape: [batch_size, 3, grid_h, grid_w, num_params]
         """
-            p为模型的预测值 -> list
-                元素1： 16×16特征图的输出
-                元素2： 32×32特征图的输出
-                元素3： 64×64特征图的输出
-            p[i].shape： 对应第i个输出特征图的shape -> [batch_size, 3, grid_h, grid_w, num_params]
-            tensor[[3, 2, 3, 2]]:
-                3: 当前特征图（grid）的宽度 -> grid_w
-                2: 当前特征图（grid）的高度 -> grid_h
-
-            之后gain: -> Tensor: [6, ] -> [1, 1, grid_w, grid_h, grid_w, grid_h]
+            p为模型的预测值 -> list, p[i].shape： 对应第i个预测特征图的shape
+            
+            p[i].shape=torch.Size([2, 3, 14, 14, 25])， 对应 [batch_size, 3, grid_h, grid_w, num_params]
+            torch.tensor(p[i].shape)=tensor([ 2,  3, 14, 14, 25])
+            torch.tensor(p[i].shape)[[3, 2, 3, 2]] = tensor([14, 14, 14, 14])
+            
+            gain = tensor([ 1,  1, 14, 14, 14, 14])
         """
         gain[2:] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
-        na = anchors.shape[0]  # number of anchors：获取anchor模板的个数 -> 3
-        # [3] -> [3, 1] -> [3, nt]
-        # nt: 当前batch GT中的目标(target)个数
+        na = anchors.shape[0]  # 获取每个预测特征层上每个cell上anchor的个数
+
         """
-            假设有4个target，则at：—— anchor模板的数量是固定的，就是3
-                     gt0    gt1    gt2    gt3
-            anchor0   0      0      0      0
-            anchor1   1      1      1      1
-            anchor2   2      2      2      2
+        假设na=3(每个预测特征层上每个cell上anchor的个数), nt=16(当前batch GT中的目标(target)个数)
+        torch.arange(na) -> tensor([0, 1, 2])
+        torch.arange(na).view(na, 1) -> tensor([[0],
+                                                [1],
+                                                [2]])
+        at = torch.arange(na).view(na, 1).repeat(1, nt) -> tensor([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                                                                  [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                                                                  [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]])
+        则有at：
+                    gt0     gt1     gt2     gt3     gt4     gt5           .............             gt16
+        anchor0     0,      0,      0,      0,      0,      0,      0, 0, 0, 0, 0, 0, 0, 0, 0,      0
+        anchor1     1,      1,      1,      1,      1,      1,      1, 1, 1, 1, 1, 1, 1, 1, 1,      1
+        anchor2     2,      2,      2,      2,      2,      2,      2, 2, 2, 2, 2, 2, 2, 2, 2,      2
         """
         at = torch.arange(na).view(na, 1).repeat(1, nt)  # anchor tensor, same as .repeat_interleave(nt)
 
-        # Match targets to anchors
-        """
-            a: 空list
-            t: targets * gain -> 将targets中GTBox的坐标全部转换为当前特征图的绝对坐标
-            offsets: 0
-        """
+        # Match targets to anchors， targets * gain -> 将targets中GTBox的坐标全部转换为当前特征图的绝对坐标
         a, t, offsets = [], targets * gain, 0
         if nt:  # 如果存在target的话（不存在GTBox的图片就没有正样本了）
             """
-                通过计算anchor模板与所有target的wh_iou来匹配正样本
-
+                通过计算当前特征图的anchor模板与所有target的wh_iou来匹配正样本
                 Note:
-                    这里的anchor是anchor模板（3个），并不是当前特征图上所有的anchor（anchor priors）
+                    这里的anchor是anchor模板（3个），并不是当前特征图上所有的anchor
 
                 那么anchor模板怎么和GTBox（target）计算IoU呢？
                     1. 将anchor模板和GTBox左上角重合
                     2. 计算IoU（交并比）
                 因此这里计算的IoU并不是精确的IoU，而是一个粗略的IoU（因为这里的anchor模板没有确定在那个cell中，一直是和GTBox左上角重合的）
 
-                示意图（假设那几个anchor个gt的IoU > 0.2了）：
-                          gt0    gt1    gt2    gt3
-                anchor0   True   
-                anchor1          True          True
-                anchor2                 True
+                示意图（假设某几个anchor个gt的IoU > 0.2了）：
+                         gt0    gt1    gt2    gt3             gt0    gt1    gt2    gt3
+                anchor0   0      0      0      0    anchor0   True   
+                anchor1   1      1      1      1    anchor1          True          True
+                anchor2   2      2      2      2    anchor2                 True
 
                 True的个数对应匹配正样本的个数 -> 这个batch中匹配到了4个正样本
 
                 wh_iou(anchors, t[:, 4:6])为anchor与GTBox的IoU
-                j是一个mask -> tensor[3, GTBox的个数，即target个数->nt]
+                j是一个mask -> tensor[3, GTBox的个数(即target个数nt)]
             """
-            # 通过计算anchor模板与所有target的wh_iou来匹配正样本
-            # j: [3, nt] , iou_t = 0.20
+            # 通过计算anchor模板与所有target的wh_iou来匹配正样本， j: [3, nt] , iou_t = 0.20
             j = wh_iou(anchors, t[:, 4:6]) > model.hyp['iou_t']  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
+
             """
-                     gt0    gt1    gt2    gt3             gt0    gt1    gt2    gt3
-            anchor0   0      0      0      0    anchor0   True   
-            anchor1   1      1      1      1    anchor1          True          True
-            anchor2   2      2      2      2    anchor2                 True
-
-            a: [0, 1, 2, 1] -> [0, 1, 2, 1]：GTBox对应的anchor模板索引
-
-            ------------------------------------------------------------------------
+            参考图片链接：Pos_and_Neg.png
+            
             t.shape: [4, 6]
-                [[ 0.0, 14.0,  3.4,  8.4,  5.2,  8.9],  # gt0
-                [ 0.0, 14.0,  1.0,  3.7,  2.1,  3.7],  # gt1
-                [ 1.0, 18.0,  4.6,  4.9,  9.3,  3.2],  # gt2
-                [ 1.0,  2.0,  5.4,  3.1,  9.6,  6.3]]  # gt3
+                tensor([[ 0.0, 14.0,  3.4,  8.4,  5.2,  8.9],  # gt0
+                        [ 0.0, 14.0,  1.0,  3.7,  2.1,  3.7],  # gt1
+                        [ 1.0, 18.0,  4.6,  4.9,  9.3,  3.2],  # gt2
+                        [ 1.0,  2.0,  5.4,  3.1,  9.6,  6.3]])  # gt3
 
-            t.repeat(3, 1, 1):
-                    gt 0                            gt 1                            gt 3                             gt 4
-anchor0 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18.0, 4.6, 4.9, 9.3, 3.2] [1.0, 2.0, 5.4, 3.1, 9.6, 6.3]
-anchor1 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18.0, 4.6, 4.9, 9.3, 3.2] [1.0, 2.0, 5.4, 3.1, 9.6, 6.3]
-anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18.0, 4.6, 4.9, 9.3, 3.2] [1.0, 2.0, 5.4, 3.1, 9.6, 6.3]
-
-            根据下表找出相应的list
-                          gt0    gt1    gt2    gt3
-                anchor0   True   
-                anchor1          True          True
-                anchor2                 True
-            用list接收，得到t:
-                t: [[0.0, 14.0, 3.4, 8.4, 5.2, 8.9], [0.0, 14.0, 1.0, 3.7, 2.1, 3.7], [1.0, 2.0, 5.4, 3.1, 9.6, 6.3], [1.0, 18.0, 4.6, 4.9, 9.3, 3.2]]
-
-            这里t存储的就是与anchor模板匹配到的GTBox信息
-
-            这里t -> list中元素的个数，就是正样本的样本数（即a中元素的个数）
-            这里说的list只是为了好理解，实际上是Tensor
+            t.repeat(na, 1, 1)[j]: 其中na = 3 
+                tensor([[[ 0.0000, 14.0000,  3.4000,  8.4000,  5.2000,  8.9000],
+                         [ 0.0000, 14.0000,  1.0000,  3.7000,  2.1000,  3.7000],
+                         [ 1.0000, 18.0000,  4.6000,  4.9000,  9.3000,  3.2000],
+                         [ 1.0000,  2.0000,  5.4000,  3.1000,  9.6000,  6.3000]],
+                        [[ 0.0000, 14.0000,  3.4000,  8.4000,  5.2000,  8.9000],
+                         [ 0.0000, 14.0000,  1.0000,  3.7000,  2.1000,  3.7000],
+                         [ 1.0000, 18.0000,  4.6000,  4.9000,  9.3000,  3.2000],
+                         [ 1.0000,  2.0000,  5.4000,  3.1000,  9.6000,  6.3000]],
+                        [[ 0.0000, 14.0000,  3.4000,  8.4000,  5.2000,  8.9000],
+                         [ 0.0000, 14.0000,  1.0000,  3.7000,  2.1000,  3.7000],
+                         [ 1.0000, 18.0000,  4.6000,  4.9000,  9.3000,  3.2000],
+                         [ 1.0000,  2.0000,  5.4000,  3.1000,  9.6000,  6.3000]]])
+                         
+            t.repeat(na, 1, 1)[j]: 其中na = 3 
+                tensor([[ 0.0000, 14.0000,  3.4000,  8.4000,  5.2000,  8.9000],
+                        [ 0.0000, 14.0000,  1.0000,  3.7000,  2.1000,  3.7000],
+                        [ 1.0000, 18.0000,  4.6000,  4.9000,  9.3000,  3.2000],
+                        [ 1.0000,  2.0000,  5.4000,  3.1000,  9.6000,  6.3000]]) 
+                        
+                        
+            at[j]: 其中at是a.shape=tensor(19)
+            tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2])      
 
             此时a和t元素就可以一一对应起来了
                 a -> Tensor[目标个数, ]: 里面的元素表示：GTBox对应的anchor模板的索引
-                t -> Tensor[目标个数, 6]: 所有正样本匹配到的GTBox信息（是一个相对当前预测图的绝对坐标）
+                t -> Tensor[目标个数, 6]: 所有正样本anchor模板匹配到的GTBox信息（是一个相对当前预测图的绝对坐标）
 
             此时就找出了每一个正样本所对应的anchor模板信息和GTBox信息
-
             Note: 这里的anchor模板(-> Tensor[3, 2])只记录了其宽度和高度，并不知道它具体在哪一个cell中
                   所以接下来我们需要求出它具体是在哪一个cell当中
             """
@@ -539,13 +577,11 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
             # 获取正样本对应的anchor模板与target信息
             a, t = at[j], t.repeat(na, 1, 1)[j]  # filter
 
+        # Define, long等于to(torch.int64), 数值向下取整(索引和标签本来就是一个int，所以向下取整没毛病)
         """
-            t -> Tensor[目标个数, 6]: 所有正样本匹配到的GTBox信息（是一个相对当前预测图的绝对坐标）
-            t[:, :2]表示每一个目标的图片索引-> b和cls -> c
-        """
-        # Define
-        # long等于to(torch.int64), 数值向下取整(索引和标签本来就是一个int，所以向下取整没毛病)
-        """
+        t -> Tensor[目标个数, 6]: 所有正样本匹配到的GTBox信息（是一个相对当前预测图的绝对坐标）
+        t[:, :2]表示每一个目标的图片索引-> b和cls -> c
+        
         t[:, :2].long() -> [目标个数, 2] -> 转置 -> [2, 目标个数]
             b -> Tensor[38,]: 对应该batch中图片的索引
             c -> Tensor[38,]: 标签
@@ -553,6 +589,7 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
         b, c = t[:, :2].long().T  # image_idx, class
         gxy = t[:, 2:4]  # grid xy
         gwh = t[:, 4:6]  # grid wh
+
         """
             这里的offsets不用管，它=0
             使用tensor.long进行上下取整
@@ -573,10 +610,8 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
                 左上角坐标，同时这个左上角坐标也是anchor的中心点坐标
         """
         gij = (gxy - offsets).long()  # 匹配targets所在的grid cell左上角坐标
-        """
-            gi: 正样本的x坐标
-            gj: 正样本的y坐标
-        """
+
+        # gi: 正样本的x坐标，gj: 正样本的y坐标
         gi, gj = gij.T  # grid xy indices
 
         """
@@ -586,10 +621,10 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
                 gj: 对应每一个正样本中心点的y坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
                 gi: 对应每一个正样本中心点的x坐标（通过torch.clamp方法将其限制在预测特征图内部，防止越界）
         """
-        # Append
         # gain[3]: grid_h, gain[2]: grid_w
         # image_idx, anchor_idx, grid indices(y, x)
         indices.append((b, a, gj.clamp_(0, gain[3]-1), gi.clamp_(0, gain[2]-1)))
+
         """
             gxy: GTBox的(x,y)
             gij: cell的左上角(x,y)
@@ -598,6 +633,7 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
             gwh：每个正样本所对应GTBox的wh
         """
         tbox.append(torch.cat((gxy - gij, gwh), 1))  # gt box相对anchor的x,y偏移量以及w,h
+
         """
             anchors: anchor的3种模板
             a: 所有正样本对应使用anchor模板的索引
@@ -605,9 +641,8 @@ anchor2 [0.0, 14.0, 3.4, 8.4, 5.2, 8.9] [0.0, 14.0, 1.0, 3.7, 2.1, 3.7] [1.0, 18
             anchors[a]： 得到每个正样本所对应anchor模板的宽度和高度
         """
         anch.append(anchors[a])  # anchors
-        """
-            c: 每个正样本所匹配GTBox的类别
-        """
+
+        # c: 每个正样本所匹配GTBox的类别
         tcls.append(c)  # class
         if c.shape[0]:  # if any targets -> 存在正样本
             # 目标的标签数值不能大于给定的目标类别数
