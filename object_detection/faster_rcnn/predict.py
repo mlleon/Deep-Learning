@@ -52,7 +52,7 @@ def main():
     model = create_model(num_classes=21)
 
     # load train weights
-    weights_path = "./save_weights/model.pth"
+    weights_path = "../../weight/faster_rcnn_weight/fasterrcnn_voc2012.pth"
     assert os.path.exists(weights_path), "{} file dose not exist.".format(weights_path)
     model.load_state_dict(torch.load(weights_path, map_location='cpu')["model"])
     model.to(device)
@@ -113,4 +113,5 @@ def main():
 
 
 if __name__ == '__main__':
+
     main()

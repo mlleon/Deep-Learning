@@ -21,7 +21,7 @@ def create_model(num_classes):
     # backbone.out_channels = 512
 
     # https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
-    backbone = MobileNetV2(weights_path="./backbone/mobilenet_v2.pth").features
+    backbone = MobileNetV2(weights_path="../../weight/faster_rcnn_weight/mobilenet_v2.pth").features
     backbone.out_channels = 1280  # 设置对应backbone输出特征矩阵的channels
 
     # 在一个预测特征层上生成5种尺寸的anchors
