@@ -4,15 +4,15 @@ from collections import defaultdict
 import numpy as np
 import copy
 import torch
-# import torch._six
+import torch._six
 from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO
 import pycocotools.mask as mask_util
 
 from train_utils.distributed_utils import all_gather
 
-int_classes = int
-string_classes = str
+# int_classes = int
+# string_classes = str
 
 
 class CocoEvaluator(object):
