@@ -3,8 +3,10 @@ import datetime
 
 import torch
 import torchvision
+from torch.utils.tensorboard import SummaryWriter
 
 import transforms
+from data_utils import plot_class_preds
 from network_files import FasterRCNN, AnchorsGenerator
 from backbone import MobileNetV2, vgg
 from my_dataset import VOCDataSet
@@ -115,7 +117,6 @@ def main():
     # print(model)
 
     model.to(device)
-
     scaler = torch.cuda.amp.GradScaler() if amp else None
 
     train_loss = []
