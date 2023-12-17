@@ -41,7 +41,7 @@
 * 确保提前下载好对应预训练模型权重
 * 若要训练mobilenetv2+fasterrcnn，直接使用train_mobilenet.py训练脚本
 * 若要训练resnet50+fpn+fasterrcnn，直接使用train_resnet50_fpn.py训练脚本
-* 若要使用多GPU训练，使用`python -m torch.distributed.launch --nproc_per_node=8 --use_env train_multi_GPU.py`指令,`nproc_per_node`参数为使用GPU数量
+* 若要使用多GPU训练，使用`python -m torch.distributed.launch --nproc_per_node=2 --use_env train_multi_GPU.py`指令,`nproc_per_node`参数为使用GPU数量
 * 如果想指定使用哪些GPU设备可在指令前加上`CUDA_VISIBLE_DEVICES=0,3`(例如我只要使用设备中的第1块和第4块GPU设备)
 * `CUDA_VISIBLE_DEVICES=0,3 python -m torch.distributed.launch --nproc_per_node=2 --use_env train_multi_GPU.py`
 

@@ -4,6 +4,7 @@ import datetime
 import torch
 
 import transforms
+from torch.utils.tensorboard import SummaryWriter
 from network_files import FasterRCNN, FastRCNNPredictor
 from backbone import resnet50_fpn_backbone
 from my_dataset import VOCDataSet
@@ -14,6 +15,7 @@ from train_utils import train_eval_utils as utils
     在train_res50_fpn.py 中， create_model时，没有预先创建anchor生成器。
     而是在network_files/faster_rcnn_framework.py脚本中，自动生成针对resnet50_fpn的anchor生成器（若anchor生成器为空时）。
 """
+
 
 def create_model(num_classes, load_pretrain_weights=True):
     # 注意，这里的backbone默认使用的是FrozenBatchNorm2d，即不会去更新bn参数
@@ -26,11 +28,17 @@ def create_model(num_classes, load_pretrain_weights=True):
                                      trainable_layers=3)
     # 训练自己数据集时不要修改这里的91，修改的是传入的num_classes参数
     model = FasterRCNN(backbone=backbone, num_classes=91)
-    
+
     if load_pretrain_weights:
         # 载入预训练模型权重
         # https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth
-        weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
+        #         weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
+        weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth",
+                                  map_location='cpu')
+        del weights_dict['model']['roi_heads.box_predictor.cls_score.weight']
+        del weights_dict['model']['roi_heads.box_predictor.cls_score.bias']
+        del weights_dict['model']['roi_heads.box_predictor.bbox_pred.weight']
+        del weights_dict['model']['roi_heads.box_predictor.bbox_pred.bias']
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
         if len(missing_keys) != 0 or len(unexpected_keys) != 0:
             print("missing_keys: ", missing_keys)
@@ -154,6 +162,26 @@ def main(args):
 
         # evaluate on the test dataset
         coco_info = utils.evaluate(model, val_data_set_loader, device=device)
+        print(f"coco{coco_info}")
+
+        # 实例化SummaryWriter对象
+        print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
+        tb_writer = SummaryWriter(log_dir="/root/tf-logs/fasterRcnn/train_res50_fpn")
+
+        # add loss, acc and lr into tensorboard
+        tb_writer.add_scalar("train_loss", mean_loss, epoch)
+        tb_writer.add_scalar("learning_rate", optimizer.param_groups[0]["lr"], epoch)
+
+        # add weights into tensorboard
+        tb_writer.add_histogram(tag="backbone.body.layer1",
+                                values=model.backbone.body.layer1[0].conv1.weight,
+                                global_step=epoch)
+        tb_writer.add_histogram(tag="backbone.fpn.layer_blocks",
+                                values=model.backbone.fpn.layer_blocks[0].weight,
+                                global_step=epoch)
+        tb_writer.add_histogram(tag="rpn.head.conv",
+                                values=model.rpn.head.conv.weight,
+                                global_step=epoch)
 
         # write into txt
         with open(results_file, "a") as f:
@@ -200,7 +228,9 @@ if __name__ == "__main__":
     # 文件保存地址
     parser.add_argument('--output-dir', default='./save_weights', help='path where to save')
     # 若需要接着上次训练，则指定上次训练保存权重文件地址
-    parser.add_argument('--resume', default='', type=str, help='resume from checkpoint')
+    parser.add_argument('--resume',
+                        default='',
+                        type=str, help='resume from checkpoint')
     # 指定接着从哪个epoch数开始训练
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     # 训练的总epoch数
@@ -218,11 +248,11 @@ if __name__ == "__main__":
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
     # 训练的batch size
-    parser.add_argument('--batch_size', default=2, type=int, metavar='N',
+    parser.add_argument('--batch_size', default=8, type=int, metavar='N',
                         help='batch size when training.')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     # 是否使用混合精度训练(需要GPU支持混合精度)
-    parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument("--amp", default=True, help="Use torch.cuda.amp for mixed precision training")
 
     args = parser.parse_args()
     print(args)

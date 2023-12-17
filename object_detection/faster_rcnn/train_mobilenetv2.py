@@ -3,10 +3,8 @@ import datetime
 
 import torch
 import torchvision
-from torch.utils.tensorboard import SummaryWriter
 
 import transforms
-from data_utils import plot_class_preds
 from network_files import FasterRCNN, AnchorsGenerator
 from backbone import MobileNetV2, vgg
 from my_dataset import VOCDataSet
@@ -62,7 +60,7 @@ def main():
 
     VOC_root = "../../large_files/dataset"  # VOCdevkit
     aspect_ratio_group_factor = 3
-    batch_size = 2
+    batch_size = 8
     amp = False  # 是否使用混合精度训练，需要GPU支持
 
     # check voc root
@@ -83,7 +81,7 @@ def main():
         # 每个batch图片从同一高宽比例区间中取
         train_batch_sampler = GroupedBatchSampler(train_sampler, group_ids, batch_size)
 
-    nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 4])  # number of workers
+    nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 8])  # number of workers
     print('Using %g dataloader workers' % nw)
 
     # 注意这里的collate_fn是自定义的，因为读取的数据包括image和targets，不能直接使用默认的方法合成batch
@@ -117,6 +115,7 @@ def main():
     # print(model)
 
     model.to(device)
+
     scaler = torch.cuda.amp.GradScaler() if amp else None
 
     train_loss = []

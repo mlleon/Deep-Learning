@@ -13,6 +13,9 @@ from my_dataset import MyDataSet
 from data_utils import read_split_data, plot_class_preds
 from train_eval_utils import train_one_epoch, evaluate
 
+"""
+cd autodl-tmp/gitlocal/dl_code/train_trick/tensorboard_panel/   
+"""
 
 def main(args):
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -20,7 +23,7 @@ def main(args):
     print(args)
     print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
     # 实例化SummaryWriter对象
-    tb_writer = SummaryWriter(log_dir="runs/flower_experiment")
+    tb_writer = SummaryWriter(log_dir="./flower_experiment")
     if os.path.exists("./weights") is False:
         os.makedirs("./weights")
 
@@ -68,10 +71,11 @@ def main(args):
 
     # 实例化模型
     model = resnet34(num_classes=args.num_classes).to(device)
+    print(model)
 
-    # 将模型写入tensorboard，创建张一张适合模型前向传播的图片，让模型进行前向传播使用tensorboard绘制网络结构图
-    init_img = torch.zeros((1, 3, 224, 224), device=device)
-    tb_writer.add_graph(model, init_img)
+    # # 将模型写入tensorboard，创建张一张适合模型前向传播的图片，让模型进行前向传播使用tensorboard绘制网络结构图
+    # init_img = torch.zeros((1, 3, 224, 224), device=device)
+    # tb_writer.add_graph(model, init_img)
 
     # 如果存在预训练权重则载入
     if os.path.exists(args.weights):
@@ -151,12 +155,13 @@ if __name__ == '__main__':
 
     # 数据集所在根目录
     # https://storage.googleapis.com/download.tensorflow.org/example_images/flower_photos.tgz
-    img_root = "/home/leon/DL_Code/Cls_dataset/flower_data/flower_photos"
+    img_root = r"F:\gitlocal\dl_code\large_files\dataset\flower_photos"
     parser.add_argument('--data-path', type=str, default=img_root)
 
     # resnet34 官方权重下载地址
     # https://download.pytorch.org/models/resnet34-333f7ec4.pth
-    parser.add_argument('--weights', type=str, default='resNet34.pth',
+    parser.add_argument('--weights', type=str,
+                        default=r'F:\gitlocal\dl_code\large_files\weight\tensorboard_panel_weight\resNet34.pth',
                         help='initial weights path')
     parser.add_argument('--freeze-layers', type=bool, default=False)
     parser.add_argument('--device', default='cuda', help='device id (i.e. 0 or 0,1 or cpu)')

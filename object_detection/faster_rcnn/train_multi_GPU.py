@@ -5,6 +5,7 @@ import datetime
 import torch
 
 import transforms
+from torch.utils.tensorboard import SummaryWriter
 from my_dataset import VOCDataSet
 from backbone import resnet50_fpn_backbone
 from network_files import FasterRCNN, FastRCNNPredictor
@@ -21,8 +22,15 @@ def create_model(num_classes):
     model = FasterRCNN(backbone=backbone, num_classes=91)
     # 载入预训练模型权重
     # https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth
-    weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
+    weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth",
+                              map_location='cpu')
     missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
+    #     weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth", map_location='cpu')
+    #     del weights_dict['model']['roi_heads.box_predictor.cls_score.weight']
+    #     del weights_dict['model']['roi_heads.box_predictor.cls_score.bias']
+    #     del weights_dict['model']['roi_heads.box_predictor.bbox_pred.weight']
+    #     del weights_dict['model']['roi_heads.box_predictor.bbox_pred.bias']
+    #     missing_keys, unexpected_keys = model.load_state_dict(weights_dict['model'], strict=False)
     if len(missing_keys) != 0 or len(unexpected_keys) != 0:
         print("missing_keys: ", missing_keys)
         print("unexpected_keys: ", unexpected_keys)
@@ -83,12 +91,12 @@ def main(args):
             train_sampler, args.batch_size, drop_last=True)
 
     data_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_sampler=train_batch_sampler, num_workers=args.workers,
+        train_dataset, batch_sampler=train_batch_sampler, num_workers=args.workers, pin_memory=True,
         collate_fn=train_dataset.collate_fn)
 
     data_loader_test = torch.utils.data.DataLoader(
         val_dataset, batch_size=1,
-        sampler=test_sampler, num_workers=args.workers,
+        sampler=test_sampler, num_workers=args.workers, pin_memory=True,
         collate_fn=train_dataset.collate_fn)
 
     print("Creating model")
@@ -150,7 +158,17 @@ def main(args):
 
         # evaluate after every epoch
         coco_info = utils.evaluate(model, data_loader_test, device=device)
+        print(f"coco_info:{coco_info}")
         val_map.append(coco_info[1])  # pascal mAP
+
+        # 实例化SummaryWriter对象
+        print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
+        tb_writer = SummaryWriter(log_dir="/root/tf-logs/fasterRcnn/train_multi_GPU")
+
+        # add loss, acc and lr into tensorboard
+        tb_writer.add_scalar("train_loss", mean_loss, epoch)
+        tb_writer.add_scalar("val_acc", coco_info[1], epoch)
+        tb_writer.add_scalar("learning_rate", optimizer.param_groups[0]["lr"], epoch)
 
         # 只在主进程上进行写操作
         if args.rank in [-1, 0]:
@@ -203,15 +221,15 @@ if __name__ == "__main__":
     # 检测目标类别数(不包含背景)
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
     # 每块GPU上的batch_size
-    parser.add_argument('-b', '--batch-size', default=4, type=int,
+    parser.add_argument('-b', '--batch-size', default=8, type=int,
                         help='images per gpu, the total batch size is $NGPU x batch_size')
     # 指定接着从哪个epoch数开始训练
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     # 训练的总epoch数
-    parser.add_argument('--epochs', default=20, type=int, metavar='N',
+    parser.add_argument('--epochs', default=30, type=int, metavar='N',
                         help='number of total epochs to run')
     # 数据加载以及预处理的线程数
-    parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
+    parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     # 学习率，这个需要根据gpu的数量以及batch_size进行设置0.02 / 8 * num_GPU
     parser.add_argument('--lr', default=0.02, type=float,
@@ -225,7 +243,7 @@ if __name__ == "__main__":
                         metavar='W', help='weight decay (default: 1e-4)',
                         dest='weight_decay')
     # 针对torch.optim.lr_scheduler.StepLR的参数
-    parser.add_argument('--lr-step-size', default=8, type=int, help='decrease lr every step-size epochs')
+    parser.add_argument('--lr-step-size', default=4, type=int, help='decrease lr every step-size epochs')
     # 针对torch.optim.lr_scheduler.MultiStepLR的参数
     parser.add_argument('--lr-steps', default=[7, 12], nargs='+', type=int, help='decrease lr every step-size epochs')
     # 针对torch.optim.lr_scheduler.MultiStepLR的参数
@@ -235,7 +253,9 @@ if __name__ == "__main__":
     # 文件保存地址
     parser.add_argument('--output-dir', default='./multi_train', help='path where to save')
     # 基于上次的训练结果接着训练
-    parser.add_argument('--resume', default='', help='resume from checkpoint')
+    parser.add_argument('--resume', default='../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth',
+                        help='resume from checkpoint')
+    #     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)
     # 不训练，仅测试
     parser.add_argument(
@@ -251,7 +271,7 @@ if __name__ == "__main__":
     parser.add_argument('--dist-url', default='env://', help='url used to set up distributed training')
     parser.add_argument("--sync-bn", dest="sync_bn", help="Use sync batch norm", type=bool, default=False)
     # 是否使用混合精度训练(需要GPU支持混合精度)
-    parser.add_argument("--amp", default=False, help="Use torch.cuda.amp for mixed precision training")
+    parser.add_argument("--amp", default=True, help="Use torch.cuda.amp for mixed precision training")
 
     args = parser.parse_args()
 
