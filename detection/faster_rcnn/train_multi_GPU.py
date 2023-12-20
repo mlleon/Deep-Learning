@@ -22,7 +22,7 @@ def create_model(num_classes):
     model = FasterRCNN(backbone=backbone, num_classes=91)
     # 载入预训练模型权重
     # https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth
-    weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth",
+    weights_dict = torch.load("../../large_files/weight/faster_rcnn/pre_train_weight/fasterrcnn_resnet50_fpn_coco.pth",
                               map_location='cpu')
     missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
     #     weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth", map_location='cpu')
@@ -251,9 +251,12 @@ if __name__ == "__main__":
     # 训练过程打印信息的频率
     parser.add_argument('--print-freq', default=20, type=int, help='print frequency')
     # 文件保存地址
-    parser.add_argument('--output-dir', default='./multi_train', help='path where to save')
+    parser.add_argument('--output-dir',
+                        default='../../large_files/weight/faster_rcnn/post_train_weight/multi_train',
+                        help='path where to save')
     # 基于上次的训练结果接着训练
-    parser.add_argument('--resume', default='../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth',
+    parser.add_argument('--resume',
+                        default='../../large_files/weight/faster_rcnn/pre_train_weight/fasterrcnn_voc2012.pth',
                         help='resume from checkpoint')
     #     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--aspect-ratio-group-factor', default=3, type=int)

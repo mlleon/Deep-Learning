@@ -23,7 +23,7 @@ def create_model(num_classes, load_pretrain_weights=True):
     # 如果GPU显存很大可以设置比较大的batch_size就可以将norm_layer设置为普通的BatchNorm2d
     # trainable_layers包括['layer4', 'layer3', 'layer2', 'layer1', 'conv1']， 5代表全部训练
     # resnet50 imagenet weights url: https://download.pytorch.org/models/resnet50-0676ba61.pth
-    backbone = resnet50_fpn_backbone(pretrain_path="../../large_files/weight/faster_rcnn_weight/resnet50.pth",
+    backbone = resnet50_fpn_backbone(pretrain_path="../../large_files/weight/faster_rcnn/pre_train_weight/resnet50.pth",
                                      norm_layer=torch.nn.BatchNorm2d,
                                      trainable_layers=3)
     # 训练自己数据集时不要修改这里的91，修改的是传入的num_classes参数
@@ -32,13 +32,14 @@ def create_model(num_classes, load_pretrain_weights=True):
     if load_pretrain_weights:
         # 载入预训练模型权重
         # https://download.pytorch.org/models/fasterrcnn_resnet50_fpn_coco-258fb6c6.pth
-        #         weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_resnet50_fpn_coco.pth", map_location='cpu')
-        weights_dict = torch.load("../../large_files/weight/faster_rcnn_weight/fasterrcnn_voc2012.pth",
+        weights_dict = torch.load("../../large_files/weight/faster_rcnn/pre_train_weight/fasterrcnn_resnet50_fpn_coco.pth",
                                   map_location='cpu')
-        del weights_dict['model']['roi_heads.box_predictor.cls_score.weight']
-        del weights_dict['model']['roi_heads.box_predictor.cls_score.bias']
-        del weights_dict['model']['roi_heads.box_predictor.bbox_pred.weight']
-        del weights_dict['model']['roi_heads.box_predictor.bbox_pred.bias']
+        # weights_dict = torch.load("../../large_files/weight/faster_rcnn/pre_train_weight/fasterrcnn_resnet50_fpn_coco.pth",
+        #                           map_location='cpu')
+        # del weights_dict['model']['roi_heads.box_predictor.cls_score.weight']
+        # del weights_dict['model']['roi_heads.box_predictor.cls_score.bias']
+        # del weights_dict['model']['roi_heads.box_predictor.bbox_pred.weight']
+        # del weights_dict['model']['roi_heads.box_predictor.bbox_pred.bias']
         missing_keys, unexpected_keys = model.load_state_dict(weights_dict, strict=False)
         if len(missing_keys) != 0 or len(unexpected_keys) != 0:
             print("missing_keys: ", missing_keys)
@@ -200,7 +201,7 @@ def main(args):
             'epoch': epoch}
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "./save_weights/resNetFpn-model-{}.pth".format(epoch))
+        torch.save(save_files, "../../large_files/weight/fcn/post_train_weight/single_train/resNetFpn-model-{}.pth".format(epoch))
 
     # plot loss and lr curve
     if len(train_loss) != 0 and len(learning_rate) != 0:
@@ -226,7 +227,7 @@ if __name__ == "__main__":
     # 检测目标类别数(不包含背景)
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
     # 文件保存地址
-    parser.add_argument('--output-dir', default='./save_weights', help='path where to save')
+    parser.add_argument('--output-dir', default='../../large_files/weight/fcn/post_train_weight/single_train', help='path where to save')
     # 若需要接着上次训练，则指定上次训练保存权重文件地址
     parser.add_argument('--resume',
                         default='',
