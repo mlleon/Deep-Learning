@@ -201,7 +201,7 @@ def main(args):
             'epoch': epoch}
         if args.amp:
             save_files["scaler"] = scaler.state_dict()
-        torch.save(save_files, "../../large_files/weight/fcn/post_train_weight/single_train/resNetFpn-model-{}.pth".format(epoch))
+        torch.save(save_files, "../../large_files/weight/faster_rcnn/post_train_weight/single_train/resNetFpn-model-{}.pth".format(epoch))
 
     # plot loss and lr curve
     if len(train_loss) != 0 and len(learning_rate) != 0:
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     # 检测目标类别数(不包含背景)
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
     # 文件保存地址
-    parser.add_argument('--output-dir', default='../../large_files/weight/fcn/post_train_weight/single_train', help='path where to save')
+    parser.add_argument('--output-dir', default='../../large_files/weight/faster_rcnn/post_train_weight/single_train', help='path where to save')
     # 若需要接着上次训练，则指定上次训练保存权重文件地址
     parser.add_argument('--resume',
                         default='',

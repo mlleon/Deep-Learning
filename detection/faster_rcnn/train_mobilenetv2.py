@@ -21,7 +21,7 @@ def create_model(num_classes):
     # backbone.out_channels = 512
 
     # https://download.pytorch.org/models/mobilenet_v2-b0353104.pth
-    backbone = MobileNetV2(weights_path="../../large_files/weight/faster_rcnn_weight/mobilenet_v2.pth").features
+    backbone = MobileNetV2(weights_path="../../large_files/weight/faster_rcnn/pre_train_weight/mobilenet_v2.pth").features
     backbone.out_channels = 1280  # 设置对应backbone输出特征矩阵的channels
 
     # 在一个预测特征层上生成5种尺寸的anchors
@@ -49,8 +49,8 @@ def main():
     results_file = "results{}.txt".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     # 检查保存权重文件夹是否存在，不存在则创建
-    if not os.path.exists("save_weights"):
-        os.makedirs("save_weights")
+    if not os.path.exists("../../large_files/weight/faster_rcnn/post_train_weight/single_train"):
+        os.makedirs("../../large_files/weight/faster_rcnn/post_train_weight/single_train")
 
     data_transform = {
         "train": transforms.Compose([transforms.ToTensor(),
@@ -155,7 +155,7 @@ def main():
 
         val_map.append(coco_info[1])  # pascal mAP
 
-    torch.save(model.state_dict(), "./save_weights/pretrain.pth")
+    torch.save(model.state_dict(), "../../large_files/weight/faster_rcnn/post_train_weight/single_train/pretrain.pth")
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     #  second unfrozen backbone and train all network     #
@@ -210,7 +210,7 @@ def main():
                 'optimizer': optimizer.state_dict(),
                 'lr_scheduler': lr_scheduler.state_dict(),
                 'epoch': epoch}
-            torch.save(save_files, "./save_weights/mobile-model-{}.pth".format(epoch))
+            torch.save(save_files, "../../large_files/weight/faster_rcnn/post_train_weight/single_train/mobile-model-{}.pth".format(epoch))
 
     # plot loss and lr curve
     if len(train_loss) != 0 and len(learning_rate) != 0:

@@ -4,7 +4,7 @@ import datetime
 
 import torch
 
-from src import fcn_resnet50
+from src import deeplabv3_resnet50
 from train_utils import train_one_epoch, evaluate, create_lr_scheduler, init_distributed_mode, save_on_master, mkdir
 from my_dataset import VOCSegmentation
 import transforms as T
@@ -49,9 +49,8 @@ def get_transform(train):
 
 
 def create_model(aux, num_classes):
-    model = fcn_resnet50(aux=aux, num_classes=num_classes)
-    weights_dict = torch.load("../../large_files/weight/fcn/pre_train_weight/fcn_resnet50_coco.pth",
-                              map_location='cpu')
+    model = deeplabv3_resnet50(aux=aux, num_classes=num_classes)
+    weights_dict = torch.load("../../large_files/weight/deeplab_v3/pre_train_weight/deeplabv3_resnet50_coco.pth", map_location='cpu')
 
     if num_classes != 21:
         # 官方提供的预训练权重是21类(包括背景)
@@ -209,13 +208,13 @@ if __name__ == "__main__":
         description=__doc__)
 
     # 训练文件的根目录(VOCdevkit)
-    parser.add_argument('--data-path', default='../../large_files/dataset', help='dataset')
+    parser.add_argument('--data-path', default='../../large_files/dataset/', help='dataset')
     # 训练设备类型
     parser.add_argument('--device', default='cuda', help='device')
     # 检测目标类别数(不包含背景)
     parser.add_argument('--num-classes', default=20, type=int, help='num_classes')
     # 每块GPU上的batch_size
-    parser.add_argument('-b', '--batch-size', default=8, type=int,
+    parser.add_argument('-b', '--batch-size', default=4, type=int,
                         help='images per gpu, the total batch size is $NGPU x batch_size')
     parser.add_argument("--aux", default=True, type=bool, help="auxilier loss")
     # 指定接着从哪个epoch数开始训练
@@ -242,7 +241,7 @@ if __name__ == "__main__":
     parser.add_argument('--print-freq', default=20, type=int, help='print frequency')
     # 文件保存地址
     parser.add_argument('--output-dir',
-                        default='../../large_files/weight/fcn/post_train_weight/multi_train',
+                        default='../../large_files/weight/deeplab_v3/post_train_weight/multi_train',
                         help='path where to save')
     # 基于上次的训练结果接着训练
     parser.add_argument('--resume', default='', help='resume from checkpoint')
@@ -259,7 +258,7 @@ if __name__ == "__main__":
                         help='number of distributed processes')
     parser.add_argument('--dist-url', default='env://', help='url used to set up distributed training')
     # Mixed precision training parameters
-    parser.add_argument("--amp", default=True, type=bool,
+    parser.add_argument("--amp", default=False, type=bool,
                         help="Use torch.cuda.amp for mixed precision training")
 
     args = parser.parse_args()

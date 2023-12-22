@@ -7,7 +7,7 @@ from torchvision import transforms
 import numpy as np
 from PIL import Image
 
-from src import fcn_resnet50
+from src import deeplabv3_resnet50
 
 
 def time_synchronized():
@@ -18,8 +18,8 @@ def time_synchronized():
 def main():
     aux = False  # inference time not need aux_classifier
     classes = 20
-    weights_path = "../../large_files/weight/fcn/post_train_weight/single_train/model_3.pth"
-    img_path = "../../pre_pictures/picture_2.jpg"
+    weights_path = "../../large_files/weight/deeplab_v3/pre_train_weight/deeplabv3_resnet50_coco.pth"
+    img_path = "../../pre_pictures/picture_1.jpg"
     palette_path = "./palette.json"
     assert os.path.exists(weights_path), f"weights {weights_path} not found."
     assert os.path.exists(img_path), f"image {img_path} not found."
@@ -35,10 +35,11 @@ def main():
     print("using {} device.".format(device))
 
     # create model
-    model = fcn_resnet50(aux=aux, num_classes=classes+1)
+    model = deeplabv3_resnet50(aux=aux, num_classes=classes+1)
 
     # delete weights about aux_classifier
-    weights_dict = torch.load(weights_path, map_location='cpu')['model']
+    # weights_dict = torch.load(weights_path, map_location='cpu')['model']
+    weights_dict = torch.load(weights_path, map_location='cpu')
     for k in list(weights_dict.keys()):
         if "aux" in k:
             del weights_dict[k]

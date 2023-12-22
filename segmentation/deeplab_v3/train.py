@@ -4,7 +4,7 @@ import datetime
 
 import torch
 
-from src import fcn_resnet50
+from src import deeplabv3_resnet50
 from train_utils import train_one_epoch, evaluate, create_lr_scheduler
 from my_dataset import VOCSegmentation
 import transforms as T
@@ -49,11 +49,11 @@ def get_transform(train):
 
 
 def create_model(aux, num_classes, pretrain=True):
-    model = fcn_resnet50(aux=aux, num_classes=num_classes)
+    model = deeplabv3_resnet50(aux=aux, num_classes=num_classes)
 
     if pretrain:
-        # 'fcn_resnet50_coco': 'https://download.pytorch.org/models/fcn_resnet50_coco-1167a1af.pth'
-        weights_dict = torch.load("../../large_files/weight/fcn/pre_train_weight/fcn_resnet50_coco.pth", map_location='cpu')
+        weights_dict = torch.load("../../large_files/weight/deeplab_v3/pre_train_weight/deeplabv3_resnet50_coco.pth",
+                                  map_location='cpu')
 
         if num_classes != 21:
             # 官方提供的预训练权重是21类(包括背景)
@@ -127,6 +127,16 @@ def main(args):
     # 创建学习率更新策略，这里是每个step更新一次(不是每个epoch)
     lr_scheduler = create_lr_scheduler(optimizer, len(train_loader), args.epochs, warmup=True)
 
+    # import matplotlib.pyplot as plt
+    # lr_list = []
+    # for _ in range(args.epochs):
+    #     for _ in range(len(train_loader)):
+    #         lr_scheduler.step()
+    #         lr = optimizer.param_groups[0]["lr"]
+    #         lr_list.append(lr)
+    # plt.plot(range(len(lr_list)), lr_list)
+    # plt.show()
+
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         model.load_state_dict(checkpoint['model'])
@@ -159,7 +169,7 @@ def main(args):
                      "args": args}
         if args.amp:
             save_file["scaler"] = scaler.state_dict()
-        torch.save(save_file, "../../large_files/weight/fcn/post_train_weight/single_train/model_{}.pth".format(epoch))
+        torch.save(save_file, "../../large_files/weight/deeplab_v3/post_train_weight/single_train/model_{}.pth".format(epoch))
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -168,13 +178,13 @@ def main(args):
 
 def parse_args():
     import argparse
-    parser = argparse.ArgumentParser(description="pytorch fcn training")
+    parser = argparse.ArgumentParser(description="pytorch deeplabv3 training")
 
-    parser.add_argument("--data-path", default="../../large_files/dataset", help="VOCdevkit root")
+    parser.add_argument("--data-path", default="../../large_files/dataset/", help="VOCdevkit root")
     parser.add_argument("--num-classes", default=20, type=int)
     parser.add_argument("--aux", default=True, type=bool, help="auxilier loss")
     parser.add_argument("--device", default="cuda", help="training device")
-    parser.add_argument("-b", "--batch-size", default=8, type=int)
+    parser.add_argument("-b", "--batch-size", default=4, type=int)
     parser.add_argument("--epochs", default=30, type=int, metavar="N",
                         help="number of total epochs to train")
 
@@ -200,7 +210,7 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
-    if not os.path.exists("../../large_files/weight/fcn/post_train_weight/single_train"):
-        os.mkdir("../../large_files/weight/fcn/post_train_weight/single_train")
+    if not os.path.exists("../../large_files/weight/deeplab_v3/post_train_weight/single_train"):
+        os.mkdir("../../large_files/weight/deeplab_v3/post_train_weight/single_train")
 
     main(args)
